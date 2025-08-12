@@ -1,0 +1,25 @@
+{
+  "name": "webpipe-js",
+  "version": "0.0.1",
+  "description": "Web Pipe parser",
+  "license": "ISC",
+  "author": "William Cotton",
+  "type": "module",
+  "main": "dist/parser.js",
+  "exports": {
+    ".": "./dist/parser.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "dev": "tsx watch parser.ts",
+    "parse": "node dist/parser.js",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.9"
+  }
+}
