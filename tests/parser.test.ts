@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { parseProgram, type Program } from '../parser';
+import { parseProgram, type Program } from '../src/parser';
 
 function loadFixture(name: string): string {
   const file = resolve(process.cwd(), name);

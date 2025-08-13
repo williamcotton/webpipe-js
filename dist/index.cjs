@@ -1,219 +1,141 @@
-export interface Program {
-  configs: Config[];
-  pipelines: NamedPipeline[];
-  variables: Variable[];
-  routes: Route[];
-  describes: Describe[];
-}
+"use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-export interface Config {
-  name: string;
-  properties: ConfigProperty[];
-}
+// src/index.ts
+var index_exports = {};
+__export(index_exports, {
+  getPipelineRanges: () => getPipelineRanges,
+  getVariableRanges: () => getVariableRanges,
+  parseProgram: () => parseProgram,
+  parseProgramWithDiagnostics: () => parseProgramWithDiagnostics
+});
+module.exports = __toCommonJS(index_exports);
 
-export interface ConfigProperty {
-  key: string;
-  value: ConfigValue;
-}
-
-export type ConfigValue =
-  | { kind: 'String'; value: string }
-  | { kind: 'EnvVar'; var: string; default?: string }
-  | { kind: 'Boolean'; value: boolean }
-  | { kind: 'Number'; value: number };
-
-export interface NamedPipeline {
-  name: string;
-  pipeline: Pipeline;
-}
-
-export interface Variable {
-  varType: string;
-  name: string;
-  value: string;
-}
-
-export interface Route {
-  method: string;
-  path: string;
-  pipeline: PipelineRef;
-}
-
-export type PipelineRef =
-  | { kind: 'Inline'; pipeline: Pipeline }
-  | { kind: 'Named'; name: string };
-
-export interface Pipeline {
-  steps: PipelineStep[];
-}
-
-export type PipelineStep =
-  | { kind: 'Regular'; name: string; config: string }
-  | { kind: 'Result'; branches: ResultBranch[] };
-
-export interface ResultBranch {
-  branchType: ResultBranchType;
-  statusCode: number;
-  pipeline: Pipeline;
-}
-
-export type ResultBranchType =
-  | { kind: 'Ok' }
-  | { kind: 'Custom'; name: string }
-  | { kind: 'Default' };
-
-export interface Describe {
-  name: string;
-  mocks: Mock[];
-  tests: It[];
-}
-
-export interface Mock {
-  target: string;
-  returnValue: string;
-}
-
-export interface It {
-  name: string;
-  mocks: Mock[];
-  when: When;
-  input?: string;
-  conditions: Condition[];
-}
-
-export type When =
-  | { kind: 'CallingRoute'; method: string; path: string }
-  | { kind: 'ExecutingPipeline'; name: string }
-  | { kind: 'ExecutingVariable'; varType: string; name: string };
-
-export interface Condition {
-  conditionType: 'Then' | 'And';
-  field: string;
-  jqExpr?: string;
-  comparison: string;
-  value: string;
-}
-
-export type DiagnosticSeverity = 'error' | 'warning' | 'info';
-export interface ParseDiagnostic {
-  message: string;
-  start: number;
-  end: number;
-  severity: DiagnosticSeverity;
-}
-
-class Parser {
-  private readonly text: string;
-  private readonly len: number;
-  private pos: number = 0;
-  private diagnostics: ParseDiagnostic[] = [];
-  private readonly pipelineRanges: Map<string, { start: number; end: number }> = new Map();
-  private readonly variableRanges: Map<string, { start: number; end: number }> = new Map();
-
-  constructor(text: string) {
+// src/parser.ts
+var import_meta = {};
+var Parser = class {
+  constructor(text) {
+    this.pos = 0;
+    this.diagnostics = [];
+    this.pipelineRanges = /* @__PURE__ */ new Map();
+    this.variableRanges = /* @__PURE__ */ new Map();
     this.text = text;
     this.len = text.length;
   }
-
-  getDiagnostics(): ParseDiagnostic[] {
+  getDiagnostics() {
     return this.diagnostics.slice();
   }
-
-  getPipelineRanges(): Map<string, { start: number; end: number }> {
+  getPipelineRanges() {
     return new Map(this.pipelineRanges);
   }
-
-  getVariableRanges(): Map<string, { start: number; end: number }> {
+  getVariableRanges() {
     return new Map(this.variableRanges);
   }
-
-  report(message: string, start: number, end: number, severity: DiagnosticSeverity): void {
+  report(message, start, end, severity) {
     this.diagnostics.push({ message, start, end, severity });
   }
-
-  findLineStart(pos: number): number {
+  findLineStart(pos) {
     let i = Math.max(0, Math.min(pos, this.len));
-    while (i > 0 && this.text[i - 1] !== '\n') i--;
+    while (i > 0 && this.text[i - 1] !== "\n") i--;
     return i;
   }
-
-  findLineEnd(pos: number): number {
+  findLineEnd(pos) {
     let i = Math.max(0, Math.min(pos, this.len));
-    while (i < this.text.length && this.text[i] !== '\n') i++;
+    while (i < this.text.length && this.text[i] !== "\n") i++;
     return i;
   }
-
-  parseProgram(): Program {
+  parseProgram() {
     this.skipSpaces();
-
-    const configs: Config[] = [];
-    const pipelines: NamedPipeline[] = [];
-    const variables: Variable[] = [];
-    const routes: Route[] = [];
-    const describes: Describe[] = [];
-
+    const configs = [];
+    const pipelines = [];
+    const variables = [];
+    const routes = [];
+    const describes = [];
     while (!this.eof()) {
       this.skipSpaces();
       if (this.eof()) break;
-
       const start = this.pos;
-
       const cfg = this.tryParse(() => this.parseConfig());
       if (cfg) {
         configs.push(cfg);
         continue;
       }
-
       const namedPipe = this.tryParse(() => this.parseNamedPipeline());
       if (namedPipe) {
         pipelines.push(namedPipe);
         continue;
       }
-
       const variable = this.tryParse(() => this.parseVariable());
       if (variable) {
         variables.push(variable);
         continue;
       }
-
       const route = this.tryParse(() => this.parseRoute());
       if (route) {
         routes.push(route);
         continue;
       }
-
       const describe = this.tryParse(() => this.parseDescribe());
       if (describe) {
         describes.push(describe);
         continue;
       }
-
       if (this.pos === start) {
         const lineStart = this.findLineStart(this.pos);
         const lineEnd = this.findLineEnd(this.pos);
-        this.report('Unrecognized or unsupported syntax', lineStart, lineEnd, 'warning');
+        this.report("Unrecognized or unsupported syntax", lineStart, lineEnd, "warning");
         this.skipToEol();
-        if (this.cur() === '\n') this.pos++;
-        this.consumeWhile((c) => c === '\n');
+        if (this.cur() === "\n") this.pos++;
+        this.consumeWhile((c) => c === "\n");
       }
     }
-
     const backtickCount = (this.text.match(/`/g) || []).length;
     if (backtickCount % 2 === 1) {
-      const idx = this.text.lastIndexOf('`');
+      const idx = this.text.lastIndexOf("`");
       const start = Math.max(0, idx);
-      this.report('Unclosed backtick-delimited string', start, start + 1, 'warning');
+      this.report("Unclosed backtick-delimited string", start, start + 1, "warning");
     }
-
     return { configs, pipelines, variables, routes, describes };
   }
-
-  private eof(): boolean { return this.pos >= this.len; }
-  private peek(): string { return this.text[this.pos] ?? '\0'; }
-  private cur(): string { return this.text[this.pos] ?? '\0'; }
-  private ahead(n: number): string { return this.text[this.pos + n] ?? '\0'; }
-
-  private tryParse<T>(fn: () => T): T | null {
+  eof() {
+    return this.pos >= this.len;
+  }
+  peek() {
+    return this.text[this.pos] ?? "\0";
+  }
+  cur() {
+    return this.text[this.pos] ?? "\0";
+  }
+  ahead(n) {
+    return this.text[this.pos + n] ?? "\0";
+  }
+  tryParse(fn) {
     const save = this.pos;
     try {
       const value = fn();
@@ -223,74 +145,63 @@ class Parser {
       return null;
     }
   }
-
-  private skipSpaces(): void {
+  skipSpaces() {
     while (true) {
-      this.consumeWhile((ch) => ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n');
-      if (this.text.startsWith('#', this.pos)) {
+      this.consumeWhile((ch) => ch === " " || ch === "	" || ch === "\r" || ch === "\n");
+      if (this.text.startsWith("#", this.pos)) {
         this.skipToEol();
-        if (this.cur() === '\n') this.pos++;
+        if (this.cur() === "\n") this.pos++;
         continue;
       }
-      if (this.text.startsWith('//', this.pos)) {
+      if (this.text.startsWith("//", this.pos)) {
         this.skipToEol();
-        if (this.cur() === '\n') this.pos++;
+        if (this.cur() === "\n") this.pos++;
         continue;
       }
       break;
     }
   }
-
-  private skipInlineSpaces(): void {
-    this.consumeWhile((ch) => ch === ' ' || ch === '\t' || ch === '\r');
+  skipInlineSpaces() {
+    this.consumeWhile((ch) => ch === " " || ch === "	" || ch === "\r");
   }
-
-  private consumeWhile(pred: (ch: string) => boolean): string {
+  consumeWhile(pred) {
     const start = this.pos;
     while (!this.eof() && pred(this.text[this.pos])) this.pos++;
     return this.text.slice(start, this.pos);
   }
-
-  private match(str: string): boolean {
+  match(str) {
     if (this.text.startsWith(str, this.pos)) {
       this.pos += str.length;
       return true;
     }
     return false;
   }
-
-  private expect(str: string): void {
+  expect(str) {
     if (!this.match(str)) throw new ParseFailure(`expected '${str}'`, this.pos);
   }
-
-  private skipToEol(): void {
-    while (!this.eof() && this.cur() !== '\n') this.pos++;
+  skipToEol() {
+    while (!this.eof() && this.cur() !== "\n") this.pos++;
   }
-
-  private isIdentStart(ch: string): boolean {
+  isIdentStart(ch) {
     return /[A-Za-z_]/.test(ch);
   }
-
-  private isIdentCont(ch: string): boolean {
+  isIdentCont(ch) {
     return /[A-Za-z0-9_\-]/.test(ch);
   }
-
-  private parseIdentifier(): string {
-    if (!this.isIdentStart(this.cur())) throw new ParseFailure('identifier', this.pos);
+  parseIdentifier() {
+    if (!this.isIdentStart(this.cur())) throw new ParseFailure("identifier", this.pos);
     const start = this.pos;
     this.pos++;
     while (!this.eof() && this.isIdentCont(this.cur())) this.pos++;
     return this.text.slice(start, this.pos);
   }
-
-  private parseNumber(): number {
+  parseNumber() {
     const start = this.pos;
     const digits = this.consumeWhile((c) => /[0-9]/.test(c));
-    if (digits.length === 0) throw new ParseFailure('number', this.pos);
+    if (digits.length === 0) throw new ParseFailure("number", this.pos);
     return parseInt(this.text.slice(start, this.pos), 10);
   }
-
-  private parseQuotedString(): string {
+  parseQuotedString() {
     this.expect('"');
     const start = this.pos;
     while (!this.eof()) {
@@ -302,94 +213,83 @@ class Parser {
     this.expect('"');
     return content;
   }
-
-  private parseBacktickString(): string {
-    this.expect('`');
+  parseBacktickString() {
+    this.expect("`");
     const start = this.pos;
     while (!this.eof()) {
       const ch = this.cur();
-      if (ch === '`') break;
+      if (ch === "`") break;
       this.pos++;
     }
     const content = this.text.slice(start, this.pos);
-    this.expect('`');
+    this.expect("`");
     return content;
   }
-
-  private parseMethod(): string {
-    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+  parseMethod() {
+    const methods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
     for (const m of methods) {
       if (this.text.startsWith(m, this.pos)) {
         this.pos += m.length;
         return m;
       }
     }
-    throw new ParseFailure('method', this.pos);
+    throw new ParseFailure("method", this.pos);
   }
-
-  private parseStepConfig(): string {
+  parseStepConfig() {
     const bt = this.tryParse(() => this.parseBacktickString());
     if (bt !== null) return bt;
     const dq = this.tryParse(() => this.parseQuotedString());
     if (dq !== null) return dq;
     const id = this.tryParse(() => this.parseIdentifier());
     if (id !== null) return id;
-    throw new ParseFailure('step-config', this.pos);
+    throw new ParseFailure("step-config", this.pos);
   }
-
-  private parseConfigValue(): ConfigValue {
+  parseConfigValue() {
     const envWithDefault = this.tryParse(() => {
-      this.expect('$');
+      this.expect("$");
       const variable = this.parseIdentifier();
       this.skipInlineSpaces();
-      this.expect('||');
+      this.expect("||");
       this.skipInlineSpaces();
       const def = this.parseQuotedString();
-      return { kind: 'EnvVar', var: variable, default: def } as ConfigValue;
+      return { kind: "EnvVar", var: variable, default: def };
     });
     if (envWithDefault) return envWithDefault;
-
     const envNoDefault = this.tryParse(() => {
-      this.expect('$');
+      this.expect("$");
       const variable = this.parseIdentifier();
-      return { kind: 'EnvVar', var: variable } as ConfigValue;
+      return { kind: "EnvVar", var: variable };
     });
     if (envNoDefault) return envNoDefault;
-
     const str = this.tryParse(() => this.parseQuotedString());
-    if (str !== null) return { kind: 'String', value: str };
-
+    if (str !== null) return { kind: "String", value: str };
     const bool = this.tryParse(() => {
-      if (this.match('true')) return true;
-      if (this.match('false')) return false;
-      throw new ParseFailure('bool', this.pos);
+      if (this.match("true")) return true;
+      if (this.match("false")) return false;
+      throw new ParseFailure("bool", this.pos);
     });
-    if (bool !== null) return { kind: 'Boolean', value: bool };
-
+    if (bool !== null) return { kind: "Boolean", value: bool };
     const num = this.tryParse(() => this.parseNumber());
-    if (num !== null) return { kind: 'Number', value: num };
-
-    throw new ParseFailure('config-value', this.pos);
+    if (num !== null) return { kind: "Number", value: num };
+    throw new ParseFailure("config-value", this.pos);
   }
-
-  private parseConfigProperty(): ConfigProperty {
+  parseConfigProperty() {
     this.skipSpaces();
     const key = this.parseIdentifier();
     this.skipInlineSpaces();
-    this.expect(':');
+    this.expect(":");
     this.skipInlineSpaces();
     const value = this.parseConfigValue();
     return { key, value };
   }
-
-  private parseConfig(): Config {
-    this.expect('config');
+  parseConfig() {
+    this.expect("config");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
     this.skipInlineSpaces();
-    this.expect('{');
+    this.expect("{");
     this.skipSpaces();
-    const properties: ConfigProperty[] = [];
+    const properties = [];
     while (true) {
       const prop = this.tryParse(() => this.parseConfigProperty());
       if (!prop) break;
@@ -397,72 +297,69 @@ class Parser {
       this.skipSpaces();
     }
     this.skipSpaces();
-    this.expect('}');
+    this.expect("}");
     this.skipSpaces();
     return { name, properties };
   }
-
-  private parsePipelineStep(): PipelineStep {
+  parsePipelineStep() {
     const result = this.tryParse(() => this.parseResultStep());
     if (result) return result;
     return this.parseRegularStep();
   }
-
-  private parseRegularStep(): PipelineStep {
+  parseRegularStep() {
     this.skipSpaces();
-    this.expect('|>');
+    this.expect("|>");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
-    this.expect(':');
+    this.expect(":");
     this.skipInlineSpaces();
     const config = this.parseStepConfig();
     this.skipSpaces();
-    return { kind: 'Regular', name, config };
+    return { kind: "Regular", name, config };
   }
-
-  private parseResultStep(): PipelineStep {
+  parseResultStep() {
     this.skipSpaces();
-    this.expect('|>');
+    this.expect("|>");
     this.skipInlineSpaces();
-    this.expect('result');
+    this.expect("result");
     this.skipSpaces();
-    const branches: ResultBranch[] = [];
+    const branches = [];
     while (true) {
       const br = this.tryParse(() => this.parseResultBranch());
       if (!br) break;
       branches.push(br);
     }
-    return { kind: 'Result', branches };
+    return { kind: "Result", branches };
   }
-
-  private parseResultBranch(): ResultBranch {
+  parseResultBranch() {
     this.skipSpaces();
     const branchIdent = this.parseIdentifier();
-    let branchType: ResultBranchType;
-    if (branchIdent === 'ok') branchType = { kind: 'Ok' };
-    else if (branchIdent === 'default') branchType = { kind: 'Default' };
-    else branchType = { kind: 'Custom', name: branchIdent };
-    this.expect('(');
+    let branchType;
+    if (branchIdent === "ok") branchType = { kind: "Ok" };
+    else if (branchIdent === "default") branchType = { kind: "Default" };
+    else branchType = { kind: "Custom", name: branchIdent };
+    this.expect("(");
     const statusCode = this.parseNumber();
     if (statusCode < 100 || statusCode > 599) {
-      this.report(`Invalid HTTP status code: ${statusCode}`,
+      this.report(
+        `Invalid HTTP status code: ${statusCode}`,
         this.pos - String(statusCode).length,
         this.pos,
-        'error');
+        "error"
+      );
     }
-    this.expect(')');
-    this.expect(':');
+    this.expect(")");
+    this.expect(":");
     this.skipSpaces();
     const pipeline = this.parsePipeline();
     return { branchType, statusCode, pipeline };
   }
-
-  private parsePipeline(): Pipeline {
-    const steps: PipelineStep[] = [];
+  parsePipeline() {
+    const steps = [];
     while (true) {
       const save = this.pos;
       this.skipSpaces();
-      if (!this.text.startsWith('|>', this.pos)) {
+      if (!this.text.startsWith("|>", this.pos)) {
         this.pos = save;
         break;
       }
@@ -471,14 +368,13 @@ class Parser {
     }
     return { steps };
   }
-
-  private parseNamedPipeline(): NamedPipeline {
+  parseNamedPipeline() {
     const start = this.pos;
-    this.expect('pipeline');
+    this.expect("pipeline");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
     this.skipInlineSpaces();
-    this.expect('=');
+    this.expect("=");
     this.skipInlineSpaces();
     const beforePipeline = this.pos;
     const pipeline = this.parsePipeline();
@@ -487,31 +383,28 @@ class Parser {
     this.skipSpaces();
     return { name, pipeline };
   }
-
-  private parsePipelineRef(): PipelineRef {
+  parsePipelineRef() {
     const inline = this.tryParse(() => this.parsePipeline());
-    if (inline && inline.steps.length > 0) return { kind: 'Inline', pipeline: inline };
-
+    if (inline && inline.steps.length > 0) return { kind: "Inline", pipeline: inline };
     const named = this.tryParse(() => {
       this.skipSpaces();
-      this.expect('|>');
+      this.expect("|>");
       this.skipInlineSpaces();
-      this.expect('pipeline:');
+      this.expect("pipeline:");
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: 'Named', name } as PipelineRef;
+      return { kind: "Named", name };
     });
     if (named) return named;
-    throw new Error('pipeline-ref');
+    throw new Error("pipeline-ref");
   }
-
-  private parseVariable(): Variable {
+  parseVariable() {
     const start = this.pos;
     const varType = this.parseIdentifier();
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
     this.skipInlineSpaces();
-    this.expect('=');
+    this.expect("=");
     this.skipInlineSpaces();
     const value = this.parseBacktickString();
     const end = this.pos;
@@ -519,213 +412,198 @@ class Parser {
     this.skipSpaces();
     return { varType, name, value };
   }
-
-  private parseRoute(): Route {
+  parseRoute() {
     const method = this.parseMethod();
     this.skipInlineSpaces();
-    const path = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+    const path = this.consumeWhile((c) => c !== " " && c !== "\n");
     this.skipSpaces();
     const pipeline = this.parsePipelineRef();
     this.skipSpaces();
     return { method, path, pipeline };
   }
-
-  private parseWhen(): When {
+  parseWhen() {
     const calling = this.tryParse(() => {
-      this.expect('calling');
+      this.expect("calling");
       this.skipInlineSpaces();
       const method = this.parseMethod();
       this.skipInlineSpaces();
-      const path = this.consumeWhile((c) => c !== '\n');
-      return { kind: 'CallingRoute', method, path } as When;
+      const path = this.consumeWhile((c) => c !== "\n");
+      return { kind: "CallingRoute", method, path };
     });
     if (calling) return calling;
-
     const executingPipeline = this.tryParse(() => {
-      this.expect('executing');
+      this.expect("executing");
       this.skipInlineSpaces();
-      this.expect('pipeline');
+      this.expect("pipeline");
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: 'ExecutingPipeline', name } as When;
+      return { kind: "ExecutingPipeline", name };
     });
     if (executingPipeline) return executingPipeline;
-
     const executingVariable = this.tryParse(() => {
-      this.expect('executing');
+      this.expect("executing");
       this.skipInlineSpaces();
-      this.expect('variable');
+      this.expect("variable");
       this.skipInlineSpaces();
       const varType = this.parseIdentifier();
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: 'ExecutingVariable', varType, name } as When;
+      return { kind: "ExecutingVariable", varType, name };
     });
     if (executingVariable) return executingVariable;
-
-    throw new ParseFailure('when', this.pos);
+    throw new ParseFailure("when", this.pos);
   }
-
-  private parseCondition(): Condition {
+  parseCondition() {
     this.skipSpaces();
     const ct = (() => {
-      if (this.match('then')) return 'Then' as const;
-      if (this.match('and')) return 'And' as const;
-      throw new Error('condition-type');
+      if (this.match("then")) return "Then";
+      if (this.match("and")) return "And";
+      throw new Error("condition-type");
     })();
     this.skipInlineSpaces();
-    const field = this.consumeWhile((c) => c !== ' ' && c !== '\n' && c !== '`');
+    const field = this.consumeWhile((c) => c !== " " && c !== "\n" && c !== "`");
     this.skipInlineSpaces();
     const jqExpr = this.tryParse(() => this.parseBacktickString());
     this.skipInlineSpaces();
-    const comparison = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+    const comparison = this.consumeWhile((c) => c !== " " && c !== "\n");
     this.skipInlineSpaces();
     const value = (() => {
       const v1 = this.tryParse(() => this.parseBacktickString());
       if (v1 !== null) return v1;
       const v2 = this.tryParse(() => this.parseQuotedString());
       if (v2 !== null) return v2;
-      return this.consumeWhile((c) => c !== '\n');
+      return this.consumeWhile((c) => c !== "\n");
     })();
-    return { conditionType: ct, field, jqExpr: jqExpr ?? undefined, comparison, value };
+    return { conditionType: ct, field, jqExpr: jqExpr ?? void 0, comparison, value };
   }
-
-  private parseMockHead(prefixWord: 'with' | 'and'): Mock {
+  parseMockHead(prefixWord) {
     this.skipSpaces();
     this.expect(prefixWord);
     this.skipInlineSpaces();
-    this.expect('mock');
+    this.expect("mock");
     this.skipInlineSpaces();
-    const target = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+    const target = this.consumeWhile((c) => c !== " " && c !== "\n");
     this.skipInlineSpaces();
-    this.expect('returning');
+    this.expect("returning");
     this.skipInlineSpaces();
     const returnValue = this.parseBacktickString();
     this.skipSpaces();
     return { target, returnValue };
   }
-
-  private parseMock(): Mock {
-    return this.parseMockHead('with');
+  parseMock() {
+    return this.parseMockHead("with");
   }
-  private parseAndMock(): Mock {
-    return this.parseMockHead('and');
+  parseAndMock() {
+    return this.parseMockHead("and");
   }
-
-  private parseIt(): It {
+  parseIt() {
     this.skipSpaces();
-    this.expect('it');
+    this.expect("it");
     this.skipInlineSpaces();
     this.expect('"');
     const name = this.consumeWhile((c) => c !== '"');
     this.expect('"');
     this.skipSpaces();
-
-    const mocks: Mock[] = [];
+    const mocks = [];
     while (true) {
       const m = this.tryParse(() => this.parseMock());
       if (!m) break;
       mocks.push(m);
     }
-
-    this.expect('when');
+    this.expect("when");
     this.skipInlineSpaces();
     const when = this.parseWhen();
     this.skipSpaces();
-
     const input = this.tryParse(() => {
-      this.expect('with');
+      this.expect("with");
       this.skipInlineSpaces();
-      this.expect('input');
+      this.expect("input");
       this.skipInlineSpaces();
       const v = this.parseBacktickString();
       this.skipSpaces();
       return v;
-    }) ?? undefined;
-
-    const extraMocks: Mock[] = [];
+    }) ?? void 0;
+    const extraMocks = [];
     while (true) {
       const m = this.tryParse(() => this.parseAndMock());
       if (!m) break;
       extraMocks.push(m);
       this.skipSpaces();
     }
-
-    const conditions: Condition[] = [];
+    const conditions = [];
     while (true) {
       const c = this.tryParse(() => this.parseCondition());
       if (!c) break;
       conditions.push(c);
     }
-
     return { name, mocks: [...mocks, ...extraMocks], when, input, conditions };
   }
-
-  private parseDescribe(): Describe {
+  parseDescribe() {
     this.skipSpaces();
-    this.expect('describe');
+    this.expect("describe");
     this.skipInlineSpaces();
     this.expect('"');
     const name = this.consumeWhile((c) => c !== '"');
     this.expect('"');
     this.skipSpaces();
-
-    const mocks: Mock[] = [];
+    const mocks = [];
     while (true) {
       const m = this.tryParse(() => this.parseMock());
       if (!m) break;
       mocks.push(m);
       this.skipSpaces();
     }
-
-    const tests: It[] = [];
+    const tests = [];
     while (true) {
       const it = this.tryParse(() => this.parseIt());
       if (!it) break;
       tests.push(it);
     }
-
     return { name, mocks, tests };
   }
-}
-
-export function parseProgram(text: string): Program {
+};
+function parseProgram(text) {
   const parser = new Parser(text);
   return parser.parseProgram();
 }
-
-export function parseProgramWithDiagnostics(text: string): { program: Program; diagnostics: ParseDiagnostic[] } {
+function parseProgramWithDiagnostics(text) {
   const parser = new Parser(text);
   const program = parser.parseProgram();
   return { program, diagnostics: parser.getDiagnostics() };
 }
-
-export function getPipelineRanges(text: string): Map<string, { start: number; end: number }> {
+function getPipelineRanges(text) {
   const parser = new Parser(text);
   parser.parseProgram();
   return parser.getPipelineRanges();
 }
-
-export function getVariableRanges(text: string): Map<string, { start: number; end: number }> {
+function getVariableRanges(text) {
   const parser = new Parser(text);
   parser.parseProgram();
   return parser.getVariableRanges();
 }
-
-class ParseFailure extends Error {
-  constructor(message: string, public at: number) {
+var ParseFailure = class extends Error {
+  constructor(message, at) {
     super(message);
+    this.at = at;
   }
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-    const fs = await import('node:fs/promises');
+};
+if (import_meta.url === `file://${process.argv[1]}`) {
+  (async () => {
+    const fs = await import("fs/promises");
     const path = process.argv[2];
     if (!path) {
-        console.error('Usage: node dist/parser.js <file.wp>');
-        process.exit(1);
+      console.error("Usage: node dist/index.mjs <file.wp>");
+      process.exit(1);
     }
-    const src = await fs.readFile(path, 'utf8');
+    const src = await fs.readFile(path, "utf8");
     const program = parseProgram(src);
     console.log(JSON.stringify(program, null, 2));
+  })();
 }
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  getPipelineRanges,
+  getVariableRanges,
+  parseProgram,
+  parseProgramWithDiagnostics
+});
