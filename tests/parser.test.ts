@@ -22,10 +22,10 @@ describe('parseProgram - comprehensive_test.wp', () => {
     expect(hello).toBeTruthy();
     expect(hello!.method).toBe('GET');
     // First step should be jq with config string
-    if (hello!.pipeline.type === 'Inline') {
+    if (hello!.pipeline.kind === 'Inline') {
       const first = hello!.pipeline.pipeline.steps[0];
-      expect(first.type).toBe('Regular');
-      if (first.type === 'Regular') {
+      expect(first.kind).toBe('Regular');
+      if (first.kind === 'Regular') {
         expect(first.name).toBe('jq');
         expect(typeof first.config).toBe('string');
       }
@@ -47,11 +47,11 @@ describe('parseProgram - comprehensive_test.wp', () => {
     expect(np).toBeTruthy();
     const route = program.routes.find(r => r.path.startsWith('/page/'));
     expect(route).toBeTruthy();
-    expect(route!.pipeline.type).toBe('Inline');
-    if (route!.pipeline.type === 'Inline') {
+    expect(route!.pipeline.kind).toBe('Inline');
+    if (route!.pipeline.kind === 'Inline') {
       const step = route!.pipeline.pipeline.steps[0];
-      expect(step.type).toBe('Regular');
-      if (step.type === 'Regular') {
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
         expect(step.name).toBe('pipeline');
         expect(step.config).toBe('getTeams');
       }
@@ -62,7 +62,7 @@ describe('parseProgram - comprehensive_test.wp', () => {
     expect(program.variables.length).toBeGreaterThan(0);
     const teamsQuery = program.variables.find(v => v.name === 'teamsQuery');
     expect(teamsQuery).toBeTruthy();
-    expect(teamsQuery!.var_type).toBe('pg');
+    expect(teamsQuery!.varType).toBe('pg');
     expect(typeof teamsQuery!.value).toBe('string');
   });
 
@@ -83,11 +83,11 @@ describe('parseProgram - focused samples', () => {
     const program = parseProgram(src);
     expect(program.routes.length).toBe(1);
     const steps = (program.routes[0].pipeline as any).pipeline.steps as any[];
-    const res = steps.find(s => s.type === 'Result');
+    const res = steps.find(s => s.kind === 'Result');
     expect(res).toBeTruthy();
     expect(res.branches.length).toBe(2);
-    expect(res.branches[0].status_code).toBe(200);
-    expect(res.branches[1].status_code).toBe(500);
+    expect(res.branches[0].statusCode).toBe(200);
+    expect(res.branches[1].statusCode).toBe(500);
   });
 
   it('parses POST with body conversion pipeline', () => {
@@ -104,11 +104,11 @@ describe('parseProgram - focused samples', () => {
     const p = program.pipelines.find(pp => pp.name === 'p');
     expect(p).toBeTruthy();
     const route = program.routes[0];
-    expect(route.pipeline.type).toBe('Inline');
-    if (route.pipeline.type === 'Inline') {
+    expect(route.pipeline.kind).toBe('Inline');
+    if (route.pipeline.kind === 'Inline') {
       const step = route.pipeline.pipeline.steps[0];
-      expect(step.type).toBe('Regular');
-      if (step.type === 'Regular') {
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
         expect(step.name).toBe('pipeline');
         expect(step.config).toBe('p');
       }

@@ -1,110 +1,129 @@
-export type Program = {
+export interface Program {
     configs: Config[];
     pipelines: NamedPipeline[];
     variables: Variable[];
     routes: Route[];
     describes: Describe[];
-};
-export type Config = {
+}
+export interface Config {
     name: string;
     properties: ConfigProperty[];
-};
-export type ConfigProperty = {
+}
+export interface ConfigProperty {
     key: string;
     value: ConfigValue;
-};
+}
 export type ConfigValue = {
-    kind: "String";
+    kind: 'String';
     value: string;
 } | {
-    kind: "EnvVar";
+    kind: 'EnvVar';
     var: string;
     default?: string;
 } | {
-    kind: "Boolean";
+    kind: 'Boolean';
     value: boolean;
 } | {
-    kind: "Number";
+    kind: 'Number';
     value: number;
 };
-export type NamedPipeline = {
+export interface NamedPipeline {
     name: string;
     pipeline: Pipeline;
-};
-export type Variable = {
-    var_type: string;
+}
+export interface Variable {
+    varType: string;
     name: string;
     value: string;
-};
-export type Route = {
+}
+export interface Route {
     method: string;
     path: string;
     pipeline: PipelineRef;
-};
+}
 export type PipelineRef = {
-    type: "Inline";
+    kind: 'Inline';
     pipeline: Pipeline;
 } | {
-    type: "Named";
+    kind: 'Named';
     name: string;
 };
-export type Pipeline = {
+export interface Pipeline {
     steps: PipelineStep[];
-};
+}
 export type PipelineStep = {
-    type: "Regular";
+    kind: 'Regular';
     name: string;
     config: string;
 } | {
-    type: "Result";
+    kind: 'Result';
     branches: ResultBranch[];
 };
-export type ResultBranch = {
-    branch_type: ResultBranchType;
-    status_code: number;
+export interface ResultBranch {
+    branchType: ResultBranchType;
+    statusCode: number;
     pipeline: Pipeline;
-};
+}
 export type ResultBranchType = {
-    type: "Ok";
+    kind: 'Ok';
 } | {
-    type: "Custom";
+    kind: 'Custom';
     name: string;
 } | {
-    type: "Default";
+    kind: 'Default';
 };
-export type Describe = {
+export interface Describe {
     name: string;
     mocks: Mock[];
     tests: It[];
-};
-export type Mock = {
+}
+export interface Mock {
     target: string;
-    return_value: string;
-};
-export type It = {
+    returnValue: string;
+}
+export interface It {
     name: string;
     mocks: Mock[];
     when: When;
     input?: string;
     conditions: Condition[];
-};
+}
 export type When = {
-    type: "CallingRoute";
+    kind: 'CallingRoute';
     method: string;
     path: string;
 } | {
-    type: "ExecutingPipeline";
+    kind: 'ExecutingPipeline';
     name: string;
 } | {
-    type: "ExecutingVariable";
-    var_type: string;
+    kind: 'ExecutingVariable';
+    varType: string;
     name: string;
 };
-export type Condition = {
-    condition_type: "then" | "and";
+export interface Condition {
+    conditionType: 'Then' | 'And';
     field: string;
-    jq_expr?: string;
+    jqExpr?: string;
     comparison: string;
     value: string;
+}
+export type DiagnosticSeverity = 'error' | 'warning' | 'info';
+export interface ParseDiagnostic {
+    message: string;
+    start: number;
+    end: number;
+    severity: DiagnosticSeverity;
+}
+export declare function parseProgram(text: string): Program;
+export declare function parseProgramWithDiagnostics(text: string): {
+    program: Program;
+    diagnostics: ParseDiagnostic[];
 };
-export declare function parseProgram(src: string): Program;
+export declare function getPipelineRanges(text: string): Map<string, {
+    start: number;
+    end: number;
+}>;
+export declare function getVariableRanges(text: string): Map<string, {
+    start: number;
+    end: number;
+}>;

@@ -1,6 +1,6 @@
 {
   "name": "webpipe-js",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Web Pipe parser",
   "license": "ISC",
   "author": "William Cotton",
@@ -20,6 +20,6 @@
     "@types/node": "^24.2.1",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2",
-    "vitest": "^2.1.9"
+    "vitest": "^3.2.4"
   }
 }

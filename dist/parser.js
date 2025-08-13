@@ -1,726 +1,586 @@
-// WebPipe TypeScript parser mirroring the Rust nom grammar in src/ast/mod.rs
-// High-level approach: a small hand-written recursive-descent parser with
-// combinator-like helpers. Produces an AST analogous to the Rust structs.
-// ===== Lexer helpers =====
-class Cursor {
-    src;
-    i;
-    constructor(src, i = 0) {
-        this.src = src;
-        this.i = i;
+class Parser {
+    text;
+    len;
+    pos = 0;
+    diagnostics = [];
+    pipelineRanges = new Map();
+    variableRanges = new Map();
+    constructor(text) {
+        this.text = text;
+        this.len = text.length;
     }
-    peek(n = 0) {
-        return this.src[this.i + n];
+    getDiagnostics() {
+        return this.diagnostics.slice();
     }
-    eof() {
-        return this.i >= this.src.length;
+    getPipelineRanges() {
+        return new Map(this.pipelineRanges);
     }
-    rest() {
-        return this.src.slice(this.i);
+    getVariableRanges() {
+        return new Map(this.variableRanges);
     }
-    advance(n) {
-        this.i += n;
+    report(message, start, end, severity) {
+        this.diagnostics.push({ message, start, end, severity });
     }
-    matchPrefix(prefix) {
-        return this.src.startsWith(prefix, this.i);
+    findLineStart(pos) {
+        let i = Math.max(0, Math.min(pos, this.len));
+        while (i > 0 && this.text[i - 1] !== '\n')
+            i--;
+        return i;
     }
-    tryConsume(prefix) {
-        if (this.matchPrefix(prefix)) {
-            this.i += prefix.length;
+    findLineEnd(pos) {
+        let i = Math.max(0, Math.min(pos, this.len));
+        while (i < this.text.length && this.text[i] !== '\n')
+            i++;
+        return i;
+    }
+    parseProgram() {
+        this.skipSpaces();
+        const configs = [];
+        const pipelines = [];
+        const variables = [];
+        const routes = [];
+        const describes = [];
+        while (!this.eof()) {
+            this.skipSpaces();
+            if (this.eof())
+                break;
+            const start = this.pos;
+            const cfg = this.tryParse(() => this.parseConfig());
+            if (cfg) {
+                configs.push(cfg);
+                continue;
+            }
+            const namedPipe = this.tryParse(() => this.parseNamedPipeline());
+            if (namedPipe) {
+                pipelines.push(namedPipe);
+                continue;
+            }
+            const variable = this.tryParse(() => this.parseVariable());
+            if (variable) {
+                variables.push(variable);
+                continue;
+            }
+            const route = this.tryParse(() => this.parseRoute());
+            if (route) {
+                routes.push(route);
+                continue;
+            }
+            const describe = this.tryParse(() => this.parseDescribe());
+            if (describe) {
+                describes.push(describe);
+                continue;
+            }
+            if (this.pos === start) {
+                const lineStart = this.findLineStart(this.pos);
+                const lineEnd = this.findLineEnd(this.pos);
+                this.report('Unrecognized or unsupported syntax', lineStart, lineEnd, 'warning');
+                this.skipToEol();
+                if (this.cur() === '\n')
+                    this.pos++;
+                this.consumeWhile((c) => c === '\n');
+            }
+        }
+        const backtickCount = (this.text.match(/`/g) || []).length;
+        if (backtickCount % 2 === 1) {
+            const idx = this.text.lastIndexOf('`');
+            const start = Math.max(0, idx);
+            this.report('Unclosed backtick-delimited string', start, start + 1, 'warning');
+        }
+        return { configs, pipelines, variables, routes, describes };
+    }
+    eof() { return this.pos >= this.len; }
+    peek() { return this.text[this.pos] ?? '\0'; }
+    cur() { return this.text[this.pos] ?? '\0'; }
+    ahead(n) { return this.text[this.pos + n] ?? '\0'; }
+    tryParse(fn) {
+        const save = this.pos;
+        try {
+            const value = fn();
+            return value;
+        }
+        catch (_e) {
+            this.pos = save;
+            return null;
+        }
+    }
+    skipSpaces() {
+        while (true) {
+            this.consumeWhile((ch) => ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n');
+            if (this.text.startsWith('#', this.pos)) {
+                this.skipToEol();
+                if (this.cur() === '\n')
+                    this.pos++;
+                continue;
+            }
+            if (this.text.startsWith('//', this.pos)) {
+                this.skipToEol();
+                if (this.cur() === '\n')
+                    this.pos++;
+                continue;
+            }
+            break;
+        }
+    }
+    skipInlineSpaces() {
+        this.consumeWhile((ch) => ch === ' ' || ch === '\t' || ch === '\r');
+    }
+    consumeWhile(pred) {
+        const start = this.pos;
+        while (!this.eof() && pred(this.text[this.pos]))
+            this.pos++;
+        return this.text.slice(start, this.pos);
+    }
+    match(str) {
+        if (this.text.startsWith(str, this.pos)) {
+            this.pos += str.length;
             return true;
         }
         return false;
     }
-    skipSpaces() {
+    expect(str) {
+        if (!this.match(str))
+            throw new ParseFailure(`expected '${str}'`, this.pos);
+    }
+    skipToEol() {
+        while (!this.eof() && this.cur() !== '\n')
+            this.pos++;
+    }
+    isIdentStart(ch) {
+        return /[A-Za-z_]/.test(ch);
+    }
+    isIdentCont(ch) {
+        return /[A-Za-z0-9_\-]/.test(ch);
+    }
+    parseIdentifier() {
+        if (!this.isIdentStart(this.cur()))
+            throw new ParseFailure('identifier', this.pos);
+        const start = this.pos;
+        this.pos++;
+        while (!this.eof() && this.isIdentCont(this.cur()))
+            this.pos++;
+        return this.text.slice(start, this.pos);
+    }
+    parseNumber() {
+        const start = this.pos;
+        const digits = this.consumeWhile((c) => /[0-9]/.test(c));
+        if (digits.length === 0)
+            throw new ParseFailure('number', this.pos);
+        return parseInt(this.text.slice(start, this.pos), 10);
+    }
+    parseQuotedString() {
+        this.expect('"');
+        const start = this.pos;
         while (!this.eof()) {
-            const ch = this.peek();
-            if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n')
-                this.i++;
-            else
+            const ch = this.cur();
+            if (ch === '"')
                 break;
+            this.pos++;
         }
+        const content = this.text.slice(start, this.pos);
+        this.expect('"');
+        return content;
     }
-}
-function isAlphaNumUnderscoreDash(ch) {
-    return /[A-Za-z0-9_-]/.test(ch);
-}
-function parseIdentifier(cur) {
-    const start = cur.i;
-    const ch0 = cur.peek();
-    if (!ch0 || !/[A-Za-z0-9_]/.test(ch0))
-        return null;
-    cur.advance(1);
-    while (!cur.eof()) {
-        const ch = cur.peek();
-        if (isAlphaNumUnderscoreDash(ch))
-            cur.advance(1);
+    parseBacktickString() {
+        this.expect('`');
+        const start = this.pos;
+        while (!this.eof()) {
+            const ch = this.cur();
+            if (ch === '`')
+                break;
+            this.pos++;
+        }
+        const content = this.text.slice(start, this.pos);
+        this.expect('`');
+        return content;
+    }
+    parseMethod() {
+        const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+        for (const m of methods) {
+            if (this.text.startsWith(m, this.pos)) {
+                this.pos += m.length;
+                return m;
+            }
+        }
+        throw new ParseFailure('method', this.pos);
+    }
+    parseStepConfig() {
+        const bt = this.tryParse(() => this.parseBacktickString());
+        if (bt !== null)
+            return bt;
+        const dq = this.tryParse(() => this.parseQuotedString());
+        if (dq !== null)
+            return dq;
+        const id = this.tryParse(() => this.parseIdentifier());
+        if (id !== null)
+            return id;
+        throw new ParseFailure('step-config', this.pos);
+    }
+    parseConfigValue() {
+        const envWithDefault = this.tryParse(() => {
+            this.expect('$');
+            const variable = this.parseIdentifier();
+            this.skipInlineSpaces();
+            this.expect('||');
+            this.skipInlineSpaces();
+            const def = this.parseQuotedString();
+            return { kind: 'EnvVar', var: variable, default: def };
+        });
+        if (envWithDefault)
+            return envWithDefault;
+        const envNoDefault = this.tryParse(() => {
+            this.expect('$');
+            const variable = this.parseIdentifier();
+            return { kind: 'EnvVar', var: variable };
+        });
+        if (envNoDefault)
+            return envNoDefault;
+        const str = this.tryParse(() => this.parseQuotedString());
+        if (str !== null)
+            return { kind: 'String', value: str };
+        const bool = this.tryParse(() => {
+            if (this.match('true'))
+                return true;
+            if (this.match('false'))
+                return false;
+            throw new ParseFailure('bool', this.pos);
+        });
+        if (bool !== null)
+            return { kind: 'Boolean', value: bool };
+        const num = this.tryParse(() => this.parseNumber());
+        if (num !== null)
+            return { kind: 'Number', value: num };
+        throw new ParseFailure('config-value', this.pos);
+    }
+    parseConfigProperty() {
+        this.skipSpaces();
+        const key = this.parseIdentifier();
+        this.skipInlineSpaces();
+        this.expect(':');
+        this.skipInlineSpaces();
+        const value = this.parseConfigValue();
+        return { key, value };
+    }
+    parseConfig() {
+        this.expect('config');
+        this.skipInlineSpaces();
+        const name = this.parseIdentifier();
+        this.skipInlineSpaces();
+        this.expect('{');
+        this.skipSpaces();
+        const properties = [];
+        while (true) {
+            const prop = this.tryParse(() => this.parseConfigProperty());
+            if (!prop)
+                break;
+            properties.push(prop);
+            this.skipSpaces();
+        }
+        this.skipSpaces();
+        this.expect('}');
+        this.skipSpaces();
+        return { name, properties };
+    }
+    parsePipelineStep() {
+        const result = this.tryParse(() => this.parseResultStep());
+        if (result)
+            return result;
+        return this.parseRegularStep();
+    }
+    parseRegularStep() {
+        this.skipSpaces();
+        this.expect('|>');
+        this.skipInlineSpaces();
+        const name = this.parseIdentifier();
+        this.expect(':');
+        this.skipInlineSpaces();
+        const config = this.parseStepConfig();
+        this.skipSpaces();
+        return { kind: 'Regular', name, config };
+    }
+    parseResultStep() {
+        this.skipSpaces();
+        this.expect('|>');
+        this.skipInlineSpaces();
+        this.expect('result');
+        this.skipSpaces();
+        const branches = [];
+        while (true) {
+            const br = this.tryParse(() => this.parseResultBranch());
+            if (!br)
+                break;
+            branches.push(br);
+        }
+        return { kind: 'Result', branches };
+    }
+    parseResultBranch() {
+        this.skipSpaces();
+        const branchIdent = this.parseIdentifier();
+        let branchType;
+        if (branchIdent === 'ok')
+            branchType = { kind: 'Ok' };
+        else if (branchIdent === 'default')
+            branchType = { kind: 'Default' };
         else
-            break;
-    }
-    return cur.src.slice(start, cur.i);
-}
-function parseQuoted(cur, quote) {
-    if (cur.peek() !== quote)
-        return null;
-    cur.advance(1);
-    const start = cur.i;
-    while (!cur.eof()) {
-        const ch = cur.peek();
-        if (ch === quote) {
-            const s = cur.src.slice(start, cur.i);
-            cur.advance(1);
-            return s;
+            branchType = { kind: 'Custom', name: branchIdent };
+        this.expect('(');
+        const statusCode = this.parseNumber();
+        if (statusCode < 100 || statusCode > 599) {
+            this.report(`Invalid HTTP status code: ${statusCode}`, this.pos - String(statusCode).length, this.pos, 'error');
         }
-        cur.advance(1);
+        this.expect(')');
+        this.expect(':');
+        this.skipSpaces();
+        const pipeline = this.parsePipeline();
+        return { branchType, statusCode, pipeline };
     }
-    return null; // unclosed
-}
-function parseDigits(cur) {
-    const start = cur.i;
-    let saw = false;
-    while (!cur.eof() && /[0-9]/.test(cur.peek())) {
-        cur.advance(1);
-        saw = true;
-    }
-    return saw ? cur.src.slice(start, cur.i) : null;
-}
-function parseMethod(cur) {
-    for (const m of ["GET", "POST", "PUT", "DELETE"]) {
-        if (cur.matchPrefix(m)) {
-            cur.advance(m.length);
-            return m;
-        }
-    }
-    return null;
-}
-function parseTakeTillNewline(cur) {
-    const start = cur.i;
-    while (!cur.eof() && cur.peek() !== '\n')
-        cur.advance(1);
-    return cur.src.slice(start, cur.i);
-}
-function expect(cur, token) {
-    if (cur.tryConsume(token))
-        return true;
-    return false;
-}
-// ===== Value helpers =====
-function parseMultiOrQuotedOrIdentifier(cur) {
-    const bt = parseQuoted(cur, '`');
-    if (bt !== null)
-        return bt;
-    const dq = parseQuoted(cur, '"');
-    if (dq !== null)
-        return dq;
-    const ident = parseIdentifier(cur);
-    if (ident !== null)
-        return ident;
-    return null;
-}
-function parseConfigValue(cur) {
-    // $VAR || "default" | $VAR | "str" | true | false | number
-    if (cur.peek() === '$') {
-        cur.advance(1);
-        const name = parseIdentifier(cur);
-        if (!name)
-            return null;
-        cur.skipSpaces();
-        if (cur.tryConsume("||")) {
-            cur.skipSpaces();
-            const d = parseQuoted(cur, '"');
-            if (d === null)
-                return null;
-            return { kind: "EnvVar", var: name, default: d };
-        }
-        return { kind: "EnvVar", var: name };
-    }
-    const dq = parseQuoted(cur, '"');
-    if (dq !== null)
-        return { kind: "String", value: dq };
-    if (cur.matchPrefix("true")) {
-        cur.advance(4);
-        return { kind: "Boolean", value: true };
-    }
-    if (cur.matchPrefix("false")) {
-        cur.advance(5);
-        return { kind: "Boolean", value: false };
-    }
-    const digits = parseDigits(cur);
-    if (digits !== null)
-        return { kind: "Number", value: Number(digits) };
-    return null;
-}
-function parseConfigProperty(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    const key = parseIdentifier(cur);
-    if (!key) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    if (!expect(cur, ":")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const value = parseConfigValue(cur);
-    if (!value) {
-        cur.i = save;
-        return null;
-    }
-    return { key, value };
-}
-function parseConfig(cur) {
-    const save = cur.i;
-    if (!cur.tryConsume("config")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const name = parseIdentifier(cur);
-    if (!name) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    if (!expect(cur, "{")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const properties = [];
-    while (true) {
-        const prop = parseConfigProperty(cur);
-        if (!prop)
-            break;
-        properties.push(prop);
-        cur.skipSpaces();
-    }
-    if (!expect(cur, "}")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    return { name, properties };
-}
-// ===== Pipeline parsing =====
-function parseStepConfig(cur) {
-    return parseMultiOrQuotedOrIdentifier(cur);
-}
-function parseRegularStep(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    if (!cur.tryConsume("|>")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const name = parseIdentifier(cur);
-    if (!name) {
-        cur.i = save;
-        return null;
-    }
-    if (!expect(cur, ":")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const config = parseStepConfig(cur);
-    if (config === null) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    return { type: "Regular", name, config };
-}
-function parseResultBranch(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    const bt = parseIdentifier(cur);
-    if (!bt) {
-        cur.i = save;
-        return null;
-    }
-    const branch_type = bt === "ok" ? { type: "Ok" } : bt === "default" ? { type: "Default" } : { type: "Custom", name: bt };
-    if (!expect(cur, "(")) {
-        cur.i = save;
-        return null;
-    }
-    const digits = parseDigits(cur);
-    if (!digits) {
-        cur.i = save;
-        return null;
-    }
-    const status_code = Number(digits);
-    if (!expect(cur, ")")) {
-        cur.i = save;
-        return null;
-    }
-    if (!expect(cur, ":")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const pipeline = parsePipeline(cur);
-    if (!pipeline) {
-        cur.i = save;
-        return null;
-    }
-    return { branch_type, status_code, pipeline };
-}
-function parseResultStep(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    if (!cur.tryConsume("|>")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    if (!cur.tryConsume("result")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const branches = [];
-    while (true) {
-        const b = parseResultBranch(cur);
-        if (!b)
-            break;
-        branches.push(b);
-    }
-    return { type: "Result", branches };
-}
-function parsePipelineStep(cur) {
-    return parseResultStep(cur) ?? parseRegularStep(cur);
-}
-function parsePipeline(cur) {
-    const steps = [];
-    while (true) {
-        const save = cur.i;
-        const step = parsePipelineStep(cur);
-        if (!step) {
-            cur.i = save;
-            break;
-        }
-        steps.push(step);
-        cur.skipSpaces();
-    }
-    return { steps };
-}
-function parseNamedPipeline(cur) {
-    const save = cur.i;
-    if (!cur.tryConsume("pipeline")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const name = parseIdentifier(cur);
-    if (!name) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    if (!expect(cur, "=")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const pipeline = parsePipeline(cur);
-    if (!pipeline) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    return { name, pipeline };
-}
-function parsePipelineRef(cur) {
-    // Try inline first
-    const saveInline = cur.i;
-    const inline = parsePipeline(cur);
-    if (inline)
-        return { type: "Inline", pipeline: inline };
-    cur.i = saveInline;
-    // |> pipeline: NAME
-    const save = cur.i;
-    cur.skipSpaces();
-    if (!cur.tryConsume("|>")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    if (!cur.tryConsume("pipeline:")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const name = parseIdentifier(cur);
-    if (!name) {
-        cur.i = save;
-        return null;
-    }
-    return { type: "Named", name };
-}
-// ===== Variable parsing =====
-function parseVariable(cur) {
-    const save = cur.i;
-    const var_type = parseIdentifier(cur);
-    if (!var_type) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const name = parseIdentifier(cur);
-    if (!name) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    if (!expect(cur, "=")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const value = parseQuoted(cur, '`');
-    if (value === null) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    return { var_type, name, value };
-}
-// ===== Route parsing =====
-function parseRoute(cur) {
-    const save = cur.i;
-    const method = parseMethod(cur);
-    if (!method) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const path = parseTakeTillNewline(cur);
-    if (path === null) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const pipeline = parsePipelineRef(cur);
-    if (!pipeline) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    return { method, path: path.trim(), pipeline };
-}
-// ===== Test parsing =====
-function parseWhen(cur) {
-    const save = cur.i;
-    // calling METHOD PATH
-    if (cur.tryConsume("calling")) {
-        cur.skipSpaces();
-        const method = parseMethod(cur);
-        if (!method) {
-            cur.i = save;
-            return null;
-        }
-        cur.skipSpaces();
-        const path = parseTakeTillNewline(cur) ?? "";
-        return { type: "CallingRoute", method, path: path.trim() };
-    }
-    cur.i = save;
-    if (cur.tryConsume("executing")) {
-        cur.skipSpaces();
-        if (cur.tryConsume("pipeline")) {
-            cur.skipSpaces();
-            const name = parseIdentifier(cur);
-            if (!name) {
-                cur.i = save;
-                return null;
+    parsePipeline() {
+        const steps = [];
+        while (true) {
+            const save = this.pos;
+            this.skipSpaces();
+            if (!this.text.startsWith('|>', this.pos)) {
+                this.pos = save;
+                break;
             }
-            return { type: "ExecutingPipeline", name };
+            const step = this.parsePipelineStep();
+            steps.push(step);
         }
-        if (cur.tryConsume("variable")) {
-            cur.skipSpaces();
-            const var_type = parseIdentifier(cur);
-            if (!var_type) {
-                cur.i = save;
-                return null;
-            }
-            cur.skipSpaces();
-            const name = parseIdentifier(cur);
-            if (!name) {
-                cur.i = save;
-                return null;
-            }
-            return { type: "ExecutingVariable", var_type, name };
-        }
+        return { steps };
     }
-    cur.i = save;
-    return null;
+    parseNamedPipeline() {
+        const start = this.pos;
+        this.expect('pipeline');
+        this.skipInlineSpaces();
+        const name = this.parseIdentifier();
+        this.skipInlineSpaces();
+        this.expect('=');
+        this.skipInlineSpaces();
+        const beforePipeline = this.pos;
+        const pipeline = this.parsePipeline();
+        const end = this.pos;
+        this.pipelineRanges.set(name, { start, end });
+        this.skipSpaces();
+        return { name, pipeline };
+    }
+    parsePipelineRef() {
+        const inline = this.tryParse(() => this.parsePipeline());
+        if (inline && inline.steps.length > 0)
+            return { kind: 'Inline', pipeline: inline };
+        const named = this.tryParse(() => {
+            this.skipSpaces();
+            this.expect('|>');
+            this.skipInlineSpaces();
+            this.expect('pipeline:');
+            this.skipInlineSpaces();
+            const name = this.parseIdentifier();
+            return { kind: 'Named', name };
+        });
+        if (named)
+            return named;
+        throw new Error('pipeline-ref');
+    }
+    parseVariable() {
+        const start = this.pos;
+        const varType = this.parseIdentifier();
+        this.skipInlineSpaces();
+        const name = this.parseIdentifier();
+        this.skipInlineSpaces();
+        this.expect('=');
+        this.skipInlineSpaces();
+        const value = this.parseBacktickString();
+        const end = this.pos;
+        this.variableRanges.set(`${varType}::${name}`, { start, end });
+        this.skipSpaces();
+        return { varType, name, value };
+    }
+    parseRoute() {
+        const method = this.parseMethod();
+        this.skipInlineSpaces();
+        const path = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+        this.skipSpaces();
+        const pipeline = this.parsePipelineRef();
+        this.skipSpaces();
+        return { method, path, pipeline };
+    }
+    parseWhen() {
+        const calling = this.tryParse(() => {
+            this.expect('calling');
+            this.skipInlineSpaces();
+            const method = this.parseMethod();
+            this.skipInlineSpaces();
+            const path = this.consumeWhile((c) => c !== '\n');
+            return { kind: 'CallingRoute', method, path };
+        });
+        if (calling)
+            return calling;
+        const executingPipeline = this.tryParse(() => {
+            this.expect('executing');
+            this.skipInlineSpaces();
+            this.expect('pipeline');
+            this.skipInlineSpaces();
+            const name = this.parseIdentifier();
+            return { kind: 'ExecutingPipeline', name };
+        });
+        if (executingPipeline)
+            return executingPipeline;
+        const executingVariable = this.tryParse(() => {
+            this.expect('executing');
+            this.skipInlineSpaces();
+            this.expect('variable');
+            this.skipInlineSpaces();
+            const varType = this.parseIdentifier();
+            this.skipInlineSpaces();
+            const name = this.parseIdentifier();
+            return { kind: 'ExecutingVariable', varType, name };
+        });
+        if (executingVariable)
+            return executingVariable;
+        throw new ParseFailure('when', this.pos);
+    }
+    parseCondition() {
+        this.skipSpaces();
+        const ct = (() => {
+            if (this.match('then'))
+                return 'Then';
+            if (this.match('and'))
+                return 'And';
+            throw new Error('condition-type');
+        })();
+        this.skipInlineSpaces();
+        const field = this.consumeWhile((c) => c !== ' ' && c !== '\n' && c !== '`');
+        this.skipInlineSpaces();
+        const jqExpr = this.tryParse(() => this.parseBacktickString());
+        this.skipInlineSpaces();
+        const comparison = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+        this.skipInlineSpaces();
+        const value = (() => {
+            const v1 = this.tryParse(() => this.parseBacktickString());
+            if (v1 !== null)
+                return v1;
+            const v2 = this.tryParse(() => this.parseQuotedString());
+            if (v2 !== null)
+                return v2;
+            return this.consumeWhile((c) => c !== '\n');
+        })();
+        return { conditionType: ct, field, jqExpr: jqExpr ?? undefined, comparison, value };
+    }
+    parseMockHead(prefixWord) {
+        this.skipSpaces();
+        this.expect(prefixWord);
+        this.skipInlineSpaces();
+        this.expect('mock');
+        this.skipInlineSpaces();
+        const target = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+        this.skipInlineSpaces();
+        this.expect('returning');
+        this.skipInlineSpaces();
+        const returnValue = this.parseBacktickString();
+        this.skipSpaces();
+        return { target, returnValue };
+    }
+    parseMock() {
+        return this.parseMockHead('with');
+    }
+    parseAndMock() {
+        return this.parseMockHead('and');
+    }
+    parseIt() {
+        this.skipSpaces();
+        this.expect('it');
+        this.skipInlineSpaces();
+        this.expect('"');
+        const name = this.consumeWhile((c) => c !== '"');
+        this.expect('"');
+        this.skipSpaces();
+        const mocks = [];
+        while (true) {
+            const m = this.tryParse(() => this.parseMock());
+            if (!m)
+                break;
+            mocks.push(m);
+        }
+        this.expect('when');
+        this.skipInlineSpaces();
+        const when = this.parseWhen();
+        this.skipSpaces();
+        const input = this.tryParse(() => {
+            this.expect('with');
+            this.skipInlineSpaces();
+            this.expect('input');
+            this.skipInlineSpaces();
+            const v = this.parseBacktickString();
+            this.skipSpaces();
+            return v;
+        }) ?? undefined;
+        const extraMocks = [];
+        while (true) {
+            const m = this.tryParse(() => this.parseAndMock());
+            if (!m)
+                break;
+            extraMocks.push(m);
+            this.skipSpaces();
+        }
+        const conditions = [];
+        while (true) {
+            const c = this.tryParse(() => this.parseCondition());
+            if (!c)
+                break;
+            conditions.push(c);
+        }
+        return { name, mocks: [...mocks, ...extraMocks], when, input, conditions };
+    }
+    parseDescribe() {
+        this.skipSpaces();
+        this.expect('describe');
+        this.skipInlineSpaces();
+        this.expect('"');
+        const name = this.consumeWhile((c) => c !== '"');
+        this.expect('"');
+        this.skipSpaces();
+        const mocks = [];
+        while (true) {
+            const m = this.tryParse(() => this.parseMock());
+            if (!m)
+                break;
+            mocks.push(m);
+            this.skipSpaces();
+        }
+        const tests = [];
+        while (true) {
+            const it = this.tryParse(() => this.parseIt());
+            if (!it)
+                break;
+            tests.push(it);
+        }
+        return { name, mocks, tests };
+    }
 }
-function parseCondition(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    let condition_type;
-    if (cur.tryConsume("then"))
-        condition_type = "then";
-    else if (cur.tryConsume("and"))
-        condition_type = "and";
-    else {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    // field
-    const fieldStart = cur.i;
-    while (!cur.eof() && cur.peek() !== ' ' && cur.peek() !== '\n')
-        cur.advance(1);
-    const field = cur.src.slice(fieldStart, cur.i);
-    if (!field) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    // optional backticked jq
-    const jq_expr = parseQuoted(cur, '`') ?? undefined;
-    cur.skipSpaces();
-    // comparison
-    const compStart = cur.i;
-    while (!cur.eof() && cur.peek() !== ' ' && cur.peek() !== '\n')
-        cur.advance(1);
-    const comparison = cur.src.slice(compStart, cur.i);
-    if (!comparison) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    // value: backtick | quoted | rest of line
-    let value = parseQuoted(cur, '`');
-    if (value === null)
-        value = parseQuoted(cur, '"');
-    if (value === null) {
-        value = parseTakeTillNewline(cur) ?? null;
-    }
-    if (value === null) {
-        cur.i = save;
-        return null;
-    }
-    return { condition_type, field, jq_expr, comparison, value: value };
+export function parseProgram(text) {
+    const parser = new Parser(text);
+    return parser.parseProgram();
 }
-function parseMock(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    if (!cur.tryConsume("with")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    if (!cur.tryConsume("mock")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const targetStart = cur.i;
-    while (!cur.eof() && cur.peek() !== ' ')
-        cur.advance(1);
-    const target = cur.src.slice(targetStart, cur.i);
-    cur.skipSpaces();
-    if (!cur.tryConsume("returning")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const return_value = parseQuoted(cur, '`');
-    if (return_value === null) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    return { target, return_value };
+export function parseProgramWithDiagnostics(text) {
+    const parser = new Parser(text);
+    const program = parser.parseProgram();
+    return { program, diagnostics: parser.getDiagnostics() };
 }
-function parseAndMock(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    if (!cur.tryConsume("and")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    if (!cur.tryConsume("mock")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const targetStart = cur.i;
-    while (!cur.eof() && cur.peek() !== ' ')
-        cur.advance(1);
-    const target = cur.src.slice(targetStart, cur.i);
-    cur.skipSpaces();
-    if (!cur.tryConsume("returning")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const return_value = parseQuoted(cur, '`');
-    if (return_value === null) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    return { target, return_value };
+export function getPipelineRanges(text) {
+    const parser = new Parser(text);
+    parser.parseProgram();
+    return parser.getPipelineRanges();
 }
-function parseIt(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    if (!cur.tryConsume("it")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const name = parseQuoted(cur, '"');
-    if (name === null) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const mocks = [];
-    while (true) {
-        const m = parseMock(cur);
-        if (!m)
-            break;
-        mocks.push(m);
-    }
-    if (!cur.tryConsume("when")) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const when = parseWhen(cur);
-    if (!when) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    // optional input
-    let input;
-    const saveInput = cur.i;
-    if (cur.tryConsume("with")) {
-        cur.skipSpaces();
-        if (cur.tryConsume("input")) {
-            cur.skipSpaces();
-            const v = parseQuoted(cur, '`');
-            if (v !== null)
-                input = v;
-            else {
-                cur.i = saveInput;
-            }
-        }
-        else {
-            cur.i = saveInput;
-        }
-    }
-    cur.skipSpaces();
-    // additional mocks
-    while (true) {
-        const m = parseAndMock(cur);
-        if (!m)
-            break;
-        mocks.push(m);
-    }
-    cur.skipSpaces();
-    const conditions = [];
-    while (true) {
-        const c = parseCondition(cur);
-        if (!c)
-            break;
-        conditions.push(c);
-    }
-    return { name, mocks, when, input, conditions };
+export function getVariableRanges(text) {
+    const parser = new Parser(text);
+    parser.parseProgram();
+    return parser.getVariableRanges();
 }
-function parseDescribe(cur) {
-    const save = cur.i;
-    cur.skipSpaces();
-    if (!cur.tryConsume("describe")) {
-        cur.i = save;
-        return null;
+class ParseFailure extends Error {
+    at;
+    constructor(message, at) {
+        super(message);
+        this.at = at;
     }
-    cur.skipSpaces();
-    const name = parseQuoted(cur, '"');
-    if (name === null) {
-        cur.i = save;
-        return null;
-    }
-    cur.skipSpaces();
-    const mocks = [];
-    while (true) {
-        const m = parseMock(cur);
-        if (!m)
-            break;
-        mocks.push(m);
-    }
-    cur.skipSpaces();
-    const tests = [];
-    while (true) {
-        const it = parseIt(cur);
-        if (!it)
-            break;
-        tests.push(it);
-    }
-    return { name, mocks, tests };
 }
-// ===== Top-level program =====
-export function parseProgram(src) {
-    const cur = new Cursor(src);
-    cur.skipSpaces();
-    const configs = [];
-    const pipelines = [];
-    const variables = [];
-    const routes = [];
-    const describes = [];
-    while (!cur.eof()) {
-        // consume incidental space/newlines between items
-        cur.skipSpaces();
-        if (cur.eof())
-            break;
-        const save = cur.i;
-        const c = parseConfig(cur);
-        if (c) {
-            configs.push(c);
-            continue;
-        }
-        cur.i = save;
-        const np = parseNamedPipeline(cur);
-        if (np) {
-            pipelines.push(np);
-            continue;
-        }
-        cur.i = save;
-        const v = parseVariable(cur);
-        if (v) {
-            variables.push(v);
-            continue;
-        }
-        cur.i = save;
-        const r = parseRoute(cur);
-        if (r) {
-            routes.push(r);
-            continue;
-        }
-        cur.i = save;
-        const d = parseDescribe(cur);
-        if (d) {
-            describes.push(d);
-            continue;
-        }
-        // Skip to next newline if unrecognized
-        while (!cur.eof() && cur.peek() !== '\n')
-            cur.advance(1);
-        if (!cur.eof() && cur.peek() === '\n')
-            cur.advance(1);
-    }
-    return { configs, pipelines, variables, routes, describes };
-}
-// Small CLI helper for quick manual testing
 if (import.meta.url === `file://${process.argv[1]}`) {
     const fs = await import('node:fs/promises');
     const path = process.argv[2];
