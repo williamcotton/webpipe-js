@@ -127,5 +127,6 @@ declare function getVariableRanges(text: string): Map<string, {
     start: number;
     end: number;
 }>;
+declare function prettyPrint(program: Program): string;
 
-export { type Condition, type Config, type ConfigProperty, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics };
+export { type Condition, type Config, type ConfigProperty, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint };

@@ -842,17 +842,3 @@ function formatWhen(when: When): string {
       return `executing variable ${when.varType} ${when.name}`;
   }
 }
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-    (async () => {
-        const fs = await import('node:fs/promises');
-        const path = process.argv[2];
-        if (!path) {
-            console.error('Usage: node dist/index.mjs <file.wp>');
-            process.exit(1);
-        }
-        const src = await fs.readFile(path, 'utf8');
-        const program = parseProgram(src);
-        console.log(JSON.stringify(program, null, 2));
-    })();
-}
