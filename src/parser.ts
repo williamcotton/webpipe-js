@@ -718,6 +718,131 @@ class ParseFailure extends Error {
   }
 }
 
+export function prettyPrint(program: Program): string {
+  const lines: string[] = [];
+
+  program.configs.forEach(config => {
+    lines.push(`config ${config.name} {`);
+    config.properties.forEach(prop => {
+      const value = formatConfigValue(prop.value);
+      lines.push(`  ${prop.key}: ${value}`);
+    });
+    lines.push('}');
+    lines.push('');
+  });
+
+  program.variables.forEach(variable => {
+    lines.push(`${variable.varType} ${variable.name} = \`${variable.value}\``);
+  });
+  if (program.variables.length > 0) lines.push('');
+
+  program.pipelines.forEach(pipeline => {
+    lines.push(`pipeline ${pipeline.name} =`);
+    pipeline.pipeline.steps.forEach(step => {
+      lines.push(formatPipelineStep(step));
+    });
+    lines.push('');
+  });
+
+  program.routes.forEach(route => {
+    lines.push(`${route.method} ${route.path}`);
+    const pipelineLines = formatPipelineRef(route.pipeline);
+    pipelineLines.forEach(line => lines.push(line));
+    lines.push('');
+  });
+
+  program.describes.forEach(describe => {
+    lines.push(`describe "${describe.name}"`);
+    describe.mocks.forEach(mock => {
+      lines.push(`  with mock ${mock.target} returning \`${mock.returnValue}\``);
+    });
+    lines.push('');
+    
+    describe.tests.forEach(test => {
+      lines.push(`  it "${test.name}"`);
+      test.mocks.forEach(mock => {
+        lines.push(`    with mock ${mock.target} returning \`${mock.returnValue}\``);
+      });
+      lines.push(`    when ${formatWhen(test.when)}`);
+      if (test.input) {
+        lines.push(`    with input \`${test.input}\``);
+      }
+      test.conditions.forEach(condition => {
+        const condType = condition.conditionType.toLowerCase();
+        const jqPart = condition.jqExpr ? ` \`${condition.jqExpr}\`` : '';
+        lines.push(`    ${condType} ${condition.field}${jqPart} ${condition.comparison} ${condition.value}`);
+      });
+      lines.push('');
+    });
+  });
+
+  return lines.join('\n').trim();
+}
+
+function formatConfigValue(value: ConfigValue): string {
+  switch (value.kind) {
+    case 'String':
+      return `"${value.value}"`;
+    case 'EnvVar':
+      return value.default ? `$${value.var} || "${value.default}"` : `$${value.var}`;
+    case 'Boolean':
+      return value.value.toString();
+    case 'Number':
+      return value.value.toString();
+  }
+}
+
+function formatPipelineStep(step: PipelineStep, indent: string = '  '): string {
+  if (step.kind === 'Regular') {
+    return `${indent}|> ${step.name}: ${formatStepConfig(step.config)}`;
+  } else {
+    const lines: string[] = [`${indent}|> result`];
+    step.branches.forEach(branch => {
+      const branchName = branch.branchType.kind === 'Ok' ? 'ok' :
+                        branch.branchType.kind === 'Default' ? 'default' :
+                        branch.branchType.name;
+      lines.push(`${indent}  ${branchName}(${branch.statusCode}):`);
+      branch.pipeline.steps.forEach(branchStep => {
+        lines.push(formatPipelineStep(branchStep, indent + '    '));
+      });
+    });
+    return lines.join('\n');
+  }
+}
+
+function formatStepConfig(config: string): string {
+  if (config.includes('`')) {
+    return `\`${config}\``;
+  } else if (config.includes(' ') || config.includes('\n')) {
+    return `"${config}"`;
+  } else {
+    return config;
+  }
+}
+
+function formatPipelineRef(ref: PipelineRef): string[] {
+  if (ref.kind === 'Named') {
+    return [`  |> pipeline: ${ref.name}`];
+  } else {
+    const lines: string[] = [];
+    ref.pipeline.steps.forEach(step => {
+      lines.push(formatPipelineStep(step));
+    });
+    return lines;
+  }
+}
+
+function formatWhen(when: When): string {
+  switch (when.kind) {
+    case 'CallingRoute':
+      return `calling ${when.method} ${when.path}`;
+    case 'ExecutingPipeline':
+      return `executing pipeline ${when.name}`;
+    case 'ExecutingVariable':
+      return `executing variable ${when.varType} ${when.name}`;
+  }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
     (async () => {
         const fs = await import('node:fs/promises');
