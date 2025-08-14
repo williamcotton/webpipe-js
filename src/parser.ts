@@ -721,29 +721,10 @@ class ParseFailure extends Error {
 export function prettyPrint(program: Program): string {
   const lines: string[] = [];
 
-  program.configs.forEach(config => {
-    lines.push(`config ${config.name} {`);
-    config.properties.forEach(prop => {
-      const value = formatConfigValue(prop.value);
-      lines.push(`  ${prop.key}: ${value}`);
-    });
-    lines.push('}');
-    lines.push('');
-  });
-
-  program.variables.forEach(variable => {
-    lines.push(`${variable.varType} ${variable.name} = \`${variable.value}\``);
-  });
-  if (program.variables.length > 0) lines.push('');
-
-  program.pipelines.forEach(pipeline => {
-    lines.push(`pipeline ${pipeline.name} =`);
-    pipeline.pipeline.steps.forEach(step => {
-      lines.push(formatPipelineStep(step));
-    });
-    lines.push('');
-  });
-
+  // First process routes in order, interspersing other elements as they appear
+  // For now, let's group by type in the expected order
+  
+  // Routes come first (after initial comment)
   program.routes.forEach(route => {
     lines.push(`${route.method} ${route.path}`);
     const pipelineLines = formatPipelineRef(route.pipeline);
@@ -751,6 +732,7 @@ export function prettyPrint(program: Program): string {
     lines.push('');
   });
 
+  // Then describes
   program.describes.forEach(describe => {
     lines.push(`describe "${describe.name}"`);
     describe.mocks.forEach(mock => {
@@ -770,11 +752,43 @@ export function prettyPrint(program: Program): string {
       test.conditions.forEach(condition => {
         const condType = condition.conditionType.toLowerCase();
         const jqPart = condition.jqExpr ? ` \`${condition.jqExpr}\`` : '';
-        lines.push(`    ${condType} ${condition.field}${jqPart} ${condition.comparison} ${condition.value}`);
+        const value = condition.value.startsWith('`') ? condition.value : 
+                     (condition.value.includes('\n') || condition.value.includes('{') || condition.value.includes('[')) ? `\`${condition.value}\`` :
+                     condition.value;
+        lines.push(`    ${condType} ${condition.field}${jqPart} ${condition.comparison} ${value}`);
       });
       lines.push('');
     });
   });
+
+  // Then configs
+  if (program.configs.length > 0) {
+    lines.push('## Config');
+    program.configs.forEach(config => {
+      lines.push(`config ${config.name} {`);
+      config.properties.forEach(prop => {
+        const value = formatConfigValue(prop.value);
+        lines.push(`  ${prop.key}: ${value}`);
+      });
+      lines.push('}');
+      lines.push('');
+    });
+  }
+
+  // Then pipelines
+  program.pipelines.forEach(pipeline => {
+    lines.push(`pipeline ${pipeline.name} =`);
+    pipeline.pipeline.steps.forEach(step => {
+      lines.push(formatPipelineStep(step));
+    });
+    lines.push('');
+  });
+
+  // Finally variables
+  program.variables.forEach(variable => {
+    lines.push(`${variable.varType} ${variable.name} = \`${variable.value}\``);
+  });
+  if (program.variables.length > 0) lines.push('');
 
   return lines.join('\n').trim();
 }
@@ -811,9 +825,10 @@ function formatPipelineStep(step: PipelineStep, indent: string = '  '): string {
 }
 
 function formatStepConfig(config: string): string {
-  if (config.includes('`')) {
+  // Always use backticks for multiline content or complex expressions
+  if (config.includes('\n') || config.includes('{') || config.includes('[') || config.includes('.') || config.includes('(')) {
     return `\`${config}\``;
-  } else if (config.includes(' ') || config.includes('\n')) {
+  } else if (config.includes(' ')) {
     return `"${config}"`;
   } else {
     return config;

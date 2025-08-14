@@ -549,26 +549,6 @@ var ParseFailure = class extends Error {
 };
 function prettyPrint(program) {
   const lines = [];
-  program.configs.forEach((config) => {
-    lines.push(`config ${config.name} {`);
-    config.properties.forEach((prop) => {
-      const value = formatConfigValue(prop.value);
-      lines.push(`  ${prop.key}: ${value}`);
-    });
-    lines.push("}");
-    lines.push("");
-  });
-  program.variables.forEach((variable) => {
-    lines.push(`${variable.varType} ${variable.name} = \`${variable.value}\``);
-  });
-  if (program.variables.length > 0) lines.push("");
-  program.pipelines.forEach((pipeline) => {
-    lines.push(`pipeline ${pipeline.name} =`);
-    pipeline.pipeline.steps.forEach((step) => {
-      lines.push(formatPipelineStep(step));
-    });
-    lines.push("");
-  });
   program.routes.forEach((route) => {
     lines.push(`${route.method} ${route.path}`);
     const pipelineLines = formatPipelineRef(route.pipeline);
@@ -593,11 +573,35 @@ function prettyPrint(program) {
       test.conditions.forEach((condition) => {
         const condType = condition.conditionType.toLowerCase();
         const jqPart = condition.jqExpr ? ` \`${condition.jqExpr}\`` : "";
-        lines.push(`    ${condType} ${condition.field}${jqPart} ${condition.comparison} ${condition.value}`);
+        const value = condition.value.startsWith("`") ? condition.value : condition.value.includes("\n") || condition.value.includes("{") || condition.value.includes("[") ? `\`${condition.value}\`` : condition.value;
+        lines.push(`    ${condType} ${condition.field}${jqPart} ${condition.comparison} ${value}`);
       });
       lines.push("");
     });
   });
+  if (program.configs.length > 0) {
+    lines.push("## Config");
+    program.configs.forEach((config) => {
+      lines.push(`config ${config.name} {`);
+      config.properties.forEach((prop) => {
+        const value = formatConfigValue(prop.value);
+        lines.push(`  ${prop.key}: ${value}`);
+      });
+      lines.push("}");
+      lines.push("");
+    });
+  }
+  program.pipelines.forEach((pipeline) => {
+    lines.push(`pipeline ${pipeline.name} =`);
+    pipeline.pipeline.steps.forEach((step) => {
+      lines.push(formatPipelineStep(step));
+    });
+    lines.push("");
+  });
+  program.variables.forEach((variable) => {
+    lines.push(`${variable.varType} ${variable.name} = \`${variable.value}\``);
+  });
+  if (program.variables.length > 0) lines.push("");
   return lines.join("\n").trim();
 }
 function formatConfigValue(value) {
@@ -628,9 +632,9 @@ function formatPipelineStep(step, indent = "  ") {
   }
 }
 function formatStepConfig(config) {
-  if (config.includes("`")) {
+  if (config.includes("\n") || config.includes("{") || config.includes("[") || config.includes(".") || config.includes("(")) {
     return `\`${config}\``;
-  } else if (config.includes(" ") || config.includes("\n")) {
+  } else if (config.includes(" ")) {
     return `"${config}"`;
   } else {
     return config;
@@ -656,19 +660,6 @@ function formatWhen(when) {
     case "ExecutingVariable":
       return `executing variable ${when.varType} ${when.name}`;
   }
-}
-if (import.meta.url === `file://${process.argv[1]}`) {
-  (async () => {
-    const fs = await import("fs/promises");
-    const path = process.argv[2];
-    if (!path) {
-      console.error("Usage: node dist/index.mjs <file.wp>");
-      process.exit(1);
-    }
-    const src = await fs.readFile(path, "utf8");
-    const program = parseProgram(src);
-    console.log(JSON.stringify(program, null, 2));
-  })();
 }
 export {
   getPipelineRanges,
