@@ -127,6 +127,19 @@ declare function getVariableRanges(text: string): Map<string, {
     start: number;
     end: number;
 }>;
+declare function printRoute(route: Route): string;
+declare function printConfig(config: Config): string;
+declare function printPipeline(pipeline: NamedPipeline): string;
+declare function printVariable(variable: Variable): string;
+declare function printMock(mock: Mock, indent?: string): string;
+declare function printCondition(condition: Condition, indent?: string): string;
+declare function printTest(test: It): string;
+declare function printDescribe(describe: Describe): string;
 declare function prettyPrint(program: Program): string;
+declare function formatConfigValue(value: ConfigValue): string;
+declare function formatPipelineStep(step: PipelineStep, indent?: string): string;
+declare function formatStepConfig(config: string): string;
+declare function formatPipelineRef(ref: PipelineRef): string[];
+declare function formatWhen(when: When): string;
 
-export { type Condition, type Config, type ConfigProperty, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint };
+export { type Condition, type Config, type ConfigProperty, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printCondition, printConfig, printDescribe, printMock, printPipeline, printRoute, printTest, printVariable };

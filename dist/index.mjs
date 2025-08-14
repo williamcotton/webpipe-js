@@ -547,59 +547,96 @@ var ParseFailure = class extends Error {
     this.at = at;
   }
 };
+function printRoute(route) {
+  const lines = [];
+  lines.push(`${route.method} ${route.path}`);
+  const pipelineLines = formatPipelineRef(route.pipeline);
+  pipelineLines.forEach((line) => lines.push(line));
+  return lines.join("\n");
+}
+function printConfig(config) {
+  const lines = [];
+  lines.push(`config ${config.name} {`);
+  config.properties.forEach((prop) => {
+    const value = formatConfigValue(prop.value);
+    lines.push(`  ${prop.key}: ${value}`);
+  });
+  lines.push("}");
+  return lines.join("\n");
+}
+function printPipeline(pipeline) {
+  const lines = [];
+  lines.push(`pipeline ${pipeline.name} =`);
+  pipeline.pipeline.steps.forEach((step) => {
+    lines.push(formatPipelineStep(step));
+  });
+  return lines.join("\n");
+}
+function printVariable(variable) {
+  return `${variable.varType} ${variable.name} = \`${variable.value}\``;
+}
+function printMock(mock, indent = "  ") {
+  return `${indent}with mock ${mock.target} returning \`${mock.returnValue}\``;
+}
+function printCondition(condition, indent = "    ") {
+  const condType = condition.conditionType.toLowerCase();
+  const jqPart = condition.jqExpr ? ` \`${condition.jqExpr}\`` : "";
+  const value = condition.value.startsWith("`") ? condition.value : condition.value.includes("\n") || condition.value.includes("{") || condition.value.includes("[") ? `\`${condition.value}\`` : condition.value;
+  return `${indent}${condType} ${condition.field}${jqPart} ${condition.comparison} ${value}`;
+}
+function printTest(test) {
+  const lines = [];
+  lines.push(`  it "${test.name}"`);
+  test.mocks.forEach((mock) => {
+    lines.push(printMock(mock, "    "));
+  });
+  lines.push(`    when ${formatWhen(test.when)}`);
+  if (test.input) {
+    lines.push(`    with input \`${test.input}\``);
+  }
+  test.conditions.forEach((condition) => {
+    lines.push(printCondition(condition));
+  });
+  return lines.join("\n");
+}
+function printDescribe(describe) {
+  const lines = [];
+  lines.push(`describe "${describe.name}"`);
+  describe.mocks.forEach((mock) => {
+    lines.push(printMock(mock));
+  });
+  if (describe.mocks.length > 0) {
+    lines.push("");
+  }
+  describe.tests.forEach((test) => {
+    lines.push(printTest(test));
+    lines.push("");
+  });
+  return lines.join("\n").replace(/\n\n$/, "\n");
+}
 function prettyPrint(program) {
   const lines = [];
   program.routes.forEach((route) => {
-    lines.push(`${route.method} ${route.path}`);
-    const pipelineLines = formatPipelineRef(route.pipeline);
-    pipelineLines.forEach((line) => lines.push(line));
+    lines.push(printRoute(route));
     lines.push("");
   });
   program.describes.forEach((describe) => {
-    lines.push(`describe "${describe.name}"`);
-    describe.mocks.forEach((mock) => {
-      lines.push(`  with mock ${mock.target} returning \`${mock.returnValue}\``);
-    });
+    lines.push(printDescribe(describe));
     lines.push("");
-    describe.tests.forEach((test) => {
-      lines.push(`  it "${test.name}"`);
-      test.mocks.forEach((mock) => {
-        lines.push(`    with mock ${mock.target} returning \`${mock.returnValue}\``);
-      });
-      lines.push(`    when ${formatWhen(test.when)}`);
-      if (test.input) {
-        lines.push(`    with input \`${test.input}\``);
-      }
-      test.conditions.forEach((condition) => {
-        const condType = condition.conditionType.toLowerCase();
-        const jqPart = condition.jqExpr ? ` \`${condition.jqExpr}\`` : "";
-        const value = condition.value.startsWith("`") ? condition.value : condition.value.includes("\n") || condition.value.includes("{") || condition.value.includes("[") ? `\`${condition.value}\`` : condition.value;
-        lines.push(`    ${condType} ${condition.field}${jqPart} ${condition.comparison} ${value}`);
-      });
-      lines.push("");
-    });
   });
   if (program.configs.length > 0) {
     lines.push("## Config");
     program.configs.forEach((config) => {
-      lines.push(`config ${config.name} {`);
-      config.properties.forEach((prop) => {
-        const value = formatConfigValue(prop.value);
-        lines.push(`  ${prop.key}: ${value}`);
-      });
-      lines.push("}");
+      lines.push(printConfig(config));
       lines.push("");
     });
   }
   program.pipelines.forEach((pipeline) => {
-    lines.push(`pipeline ${pipeline.name} =`);
-    pipeline.pipeline.steps.forEach((step) => {
-      lines.push(formatPipelineStep(step));
-    });
+    lines.push(printPipeline(pipeline));
     lines.push("");
   });
   program.variables.forEach((variable) => {
-    lines.push(`${variable.varType} ${variable.name} = \`${variable.value}\``);
+    lines.push(printVariable(variable));
   });
   if (program.variables.length > 0) lines.push("");
   return lines.join("\n").trim();
@@ -662,9 +699,22 @@ function formatWhen(when) {
   }
 }
 export {
+  formatConfigValue,
+  formatPipelineRef,
+  formatPipelineStep,
+  formatStepConfig,
+  formatWhen,
   getPipelineRanges,
   getVariableRanges,
   parseProgram,
   parseProgramWithDiagnostics,
-  prettyPrint
+  prettyPrint,
+  printCondition,
+  printConfig,
+  printDescribe,
+  printMock,
+  printPipeline,
+  printRoute,
+  printTest,
+  printVariable
 };
