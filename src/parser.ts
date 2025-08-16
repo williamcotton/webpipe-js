@@ -47,8 +47,10 @@ export interface Pipeline {
   steps: PipelineStep[];
 }
 
+export type ConfigType = 'backtick' | 'quoted' | 'identifier';
+
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; config: string }
+  | { kind: 'Regular'; name: string; config: string; configType: ConfigType }
   | { kind: 'Result'; branches: ResultBranch[] };
 
 export interface ResultBranch {
@@ -327,13 +329,13 @@ class Parser {
     throw new ParseFailure('method', this.pos);
   }
 
-  private parseStepConfig(): string {
+  private parseStepConfig(): { config: string; configType: ConfigType } {
     const bt = this.tryParse(() => this.parseBacktickString());
-    if (bt !== null) return bt;
+    if (bt !== null) return { config: bt, configType: 'backtick' };
     const dq = this.tryParse(() => this.parseQuotedString());
-    if (dq !== null) return dq;
+    if (dq !== null) return { config: dq, configType: 'quoted' };
     const id = this.tryParse(() => this.parseIdentifier());
-    if (id !== null) return id;
+    if (id !== null) return { config: id, configType: 'identifier' };
     throw new ParseFailure('step-config', this.pos);
   }
 
@@ -415,9 +417,9 @@ class Parser {
     const name = this.parseIdentifier();
     this.expect(':');
     this.skipInlineSpaces();
-    const config = this.parseStepConfig();
+    const { config, configType } = this.parseStepConfig();
     this.skipSpaces();
-    return { kind: 'Regular', name, config };
+    return { kind: 'Regular', name, config, configType };
   }
 
   private parseResultStep(): PipelineStep {
@@ -851,7 +853,7 @@ export function formatConfigValue(value: ConfigValue): string {
 
 export function formatPipelineStep(step: PipelineStep, indent: string = '  '): string {
   if (step.kind === 'Regular') {
-    return `${indent}|> ${step.name}: ${formatStepConfig(step.config)}`;
+    return `${indent}|> ${step.name}: ${formatStepConfig(step.config, step.configType)}`;
   } else {
     const lines: string[] = [`${indent}|> result`];
     step.branches.forEach(branch => {
@@ -867,37 +869,15 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  '): s
   }
 }
 
-export function formatStepConfig(config: string): string {
-  // Always use backticks for multiline content or complex expressions
-  if (config.includes('\n') || config.includes('{') || config.includes('[') || config.includes('.') || config.includes('(')) {
-    return `\`${config}\``;
-  } else if (config.includes(' ')) {
-    return `"${config}"`;
-  } else if (isAuthStringValue(config)) {
-    // Quote auth-specific string values, bit of a dirtyhack
-    return `"${config}"`;
-  } else {
-    return config;
+export function formatStepConfig(config: string, configType: ConfigType): string {
+  switch (configType) {
+    case 'backtick':
+      return `\`${config}\``;
+    case 'quoted':
+      return `"${config}"`;
+    case 'identifier':
+      return config;
   }
-}
-
-function isAuthStringValue(config: string): boolean {
-  // Auth configuration values that should be quoted based on the Rust middleware
-  const authValues = [
-    'login', 'logout', 'register', 'required', 'optional'
-  ];
-  
-  // Check if it's a direct auth value
-  if (authValues.includes(config)) {
-    return true;
-  }
-  
-  // Check if it starts with "type:" (like "type:admin")
-  if (config.startsWith('type:')) {
-    return true;
-  }
-  
-  return false;
 }
 
 export function formatPipelineRef(ref: PipelineRef): string[] {
