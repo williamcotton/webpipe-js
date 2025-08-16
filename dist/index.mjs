@@ -616,14 +616,6 @@ function printDescribe(describe) {
 }
 function prettyPrint(program) {
   const lines = [];
-  program.routes.forEach((route) => {
-    lines.push(printRoute(route));
-    lines.push("");
-  });
-  program.describes.forEach((describe) => {
-    lines.push(printDescribe(describe));
-    lines.push("");
-  });
   if (program.configs.length > 0) {
     lines.push("## Config");
     program.configs.forEach((config) => {
@@ -631,6 +623,10 @@ function prettyPrint(program) {
       lines.push("");
     });
   }
+  program.routes.forEach((route) => {
+    lines.push(printRoute(route));
+    lines.push("");
+  });
   program.pipelines.forEach((pipeline) => {
     lines.push(printPipeline(pipeline));
     lines.push("");
@@ -639,6 +635,10 @@ function prettyPrint(program) {
     lines.push(printVariable(variable));
   });
   if (program.variables.length > 0) lines.push("");
+  program.describes.forEach((describe) => {
+    lines.push(printDescribe(describe));
+    lines.push("");
+  });
   return lines.join("\n").trim();
 }
 function formatConfigValue(value) {
@@ -673,9 +673,27 @@ function formatStepConfig(config) {
     return `\`${config}\``;
   } else if (config.includes(" ")) {
     return `"${config}"`;
+  } else if (isAuthStringValue(config)) {
+    return `"${config}"`;
   } else {
     return config;
   }
+}
+function isAuthStringValue(config) {
+  const authValues = [
+    "login",
+    "logout",
+    "register",
+    "required",
+    "optional"
+  ];
+  if (authValues.includes(config)) {
+    return true;
+  }
+  if (config.startsWith("type:")) {
+    return true;
+  }
+  return false;
 }
 function formatPipelineRef(ref) {
   if (ref.kind === "Named") {

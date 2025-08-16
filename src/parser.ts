@@ -800,19 +800,7 @@ export function printDescribe(describe: Describe): string {
 export function prettyPrint(program: Program): string {
   const lines: string[] = [];
 
-  // Routes come first
-  program.routes.forEach(route => {
-    lines.push(printRoute(route));
-    lines.push('');
-  });
-
-  // Then describes
-  program.describes.forEach(describe => {
-    lines.push(printDescribe(describe));
-    lines.push('');
-  });
-
-  // Then configs
+  // First configs
   if (program.configs.length > 0) {
     lines.push('## Config');
     program.configs.forEach(config => {
@@ -821,17 +809,29 @@ export function prettyPrint(program: Program): string {
     });
   }
 
+  // Then routes
+  program.routes.forEach(route => {
+    lines.push(printRoute(route));
+    lines.push('');
+  });
+
   // Then pipelines
   program.pipelines.forEach(pipeline => {
     lines.push(printPipeline(pipeline));
     lines.push('');
   });
 
-  // Finally variables
+  // Then variables
   program.variables.forEach(variable => {
     lines.push(printVariable(variable));
   });
   if (program.variables.length > 0) lines.push('');
+
+  // Finally describes
+  program.describes.forEach(describe => {
+    lines.push(printDescribe(describe));
+    lines.push('');
+  });
 
   return lines.join('\n').trim();
 }
@@ -874,7 +874,7 @@ export function formatStepConfig(config: string): string {
   } else if (config.includes(' ')) {
     return `"${config}"`;
   } else if (isAuthStringValue(config)) {
-    // Quote auth-specific string values
+    // Quote auth-specific string values, bit of a dirtyhack
     return `"${config}"`;
   } else {
     return config;
