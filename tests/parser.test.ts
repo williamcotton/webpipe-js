@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { parseProgram, type Program } from '../src/parser';
+import { parseProgram, type Program, prettyPrint } from '../src/parser';
 
 function loadFixture(name: string): string {
   const file = resolve(process.cwd(), name);
@@ -113,6 +113,22 @@ describe('parseProgram - focused samples', () => {
         expect(step.config).toBe('p');
       }
     }
+  });
+});
+
+describe('prettyPrint formatting', () => {
+  it('should add quotes around auth step configs', () => {
+    const src = `DELETE /todos/:id
+  |> auth: "required"
+  |> result`;
+    
+    const program = parseProgram(src);
+    const prettyPrinted = prettyPrint(program);
+    
+    // Should preserve quotes around "required"
+    expect(prettyPrinted).toContain('|> auth: "required"');
+    // Should not have unquoted required
+    expect(prettyPrinted).not.toContain('|> auth: required');
   });
 });
 

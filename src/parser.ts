@@ -873,9 +873,31 @@ export function formatStepConfig(config: string): string {
     return `\`${config}\``;
   } else if (config.includes(' ')) {
     return `"${config}"`;
+  } else if (isAuthStringValue(config)) {
+    // Quote auth-specific string values
+    return `"${config}"`;
   } else {
     return config;
   }
+}
+
+function isAuthStringValue(config: string): boolean {
+  // Auth configuration values that should be quoted based on the Rust middleware
+  const authValues = [
+    'login', 'logout', 'register', 'required', 'optional'
+  ];
+  
+  // Check if it's a direct auth value
+  if (authValues.includes(config)) {
+    return true;
+  }
+  
+  // Check if it starts with "type:" (like "type:admin")
+  if (config.startsWith('type:')) {
+    return true;
+  }
+  
+  return false;
 }
 
 export function formatPipelineRef(ref: PipelineRef): string[] {
