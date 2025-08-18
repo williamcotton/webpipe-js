@@ -9,6 +9,7 @@ export interface Program {
 export interface Config {
   name: string;
   properties: ConfigProperty[];
+  lineNumber?: number;
 }
 
 export interface ConfigProperty {
@@ -25,18 +26,21 @@ export type ConfigValue =
 export interface NamedPipeline {
   name: string;
   pipeline: Pipeline;
+  lineNumber?: number;
 }
 
 export interface Variable {
   varType: string;
   name: string;
   value: string;
+  lineNumber?: number;
 }
 
 export interface Route {
   method: string;
   path: string;
   pipeline: PipelineRef;
+  lineNumber?: number;
 }
 
 export type PipelineRef =
@@ -68,6 +72,7 @@ export interface Describe {
   name: string;
   mocks: Mock[];
   tests: It[];
+  lineNumber?: number;
 }
 
 export interface Mock {
@@ -145,6 +150,10 @@ class Parser {
     return i;
   }
 
+  getLineNumber(pos: number): number {
+    return this.text.slice(0, pos).split('\n').length;
+  }
+
   parseProgram(): Program {
     this.skipSpaces();
 
@@ -162,30 +171,35 @@ class Parser {
 
       const cfg = this.tryParse(() => this.parseConfig());
       if (cfg) {
+        cfg.lineNumber = this.getLineNumber(start);
         configs.push(cfg);
         continue;
       }
 
       const namedPipe = this.tryParse(() => this.parseNamedPipeline());
       if (namedPipe) {
+        namedPipe.lineNumber = this.getLineNumber(start);
         pipelines.push(namedPipe);
         continue;
       }
 
       const variable = this.tryParse(() => this.parseVariable());
       if (variable) {
+        variable.lineNumber = this.getLineNumber(start);
         variables.push(variable);
         continue;
       }
 
       const route = this.tryParse(() => this.parseRoute());
       if (route) {
+        route.lineNumber = this.getLineNumber(start);
         routes.push(route);
         continue;
       }
 
       const describe = this.tryParse(() => this.parseDescribe());
       if (describe) {
+        describe.lineNumber = this.getLineNumber(start);
         describes.push(describe);
         continue;
       }
@@ -802,37 +816,65 @@ export function printDescribe(describe: Describe): string {
 export function prettyPrint(program: Program): string {
   const lines: string[] = [];
 
-  // First configs
-  if (program.configs.length > 0) {
-    lines.push('## Config');
-    program.configs.forEach(config => {
-      lines.push(printConfig(config));
-      lines.push('');
-    });
-  }
-
-  // Then routes
+  // Collect all items with their line numbers and types
+  const allItems: { type: string; item: any; lineNumber: number }[] = [];
+  
+  program.configs.forEach(config => {
+    allItems.push({ type: 'config', item: config, lineNumber: config.lineNumber || 0 });
+  });
+  
   program.routes.forEach(route => {
-    lines.push(printRoute(route));
-    lines.push('');
+    allItems.push({ type: 'route', item: route, lineNumber: route.lineNumber || 0 });
   });
-
-  // Then pipelines
+  
   program.pipelines.forEach(pipeline => {
-    lines.push(printPipeline(pipeline));
-    lines.push('');
+    allItems.push({ type: 'pipeline', item: pipeline, lineNumber: pipeline.lineNumber || 0 });
   });
-
-  // Then variables
+  
   program.variables.forEach(variable => {
-    lines.push(printVariable(variable));
+    allItems.push({ type: 'variable', item: variable, lineNumber: variable.lineNumber || 0 });
   });
-  if (program.variables.length > 0) lines.push('');
-
-  // Finally describes
+  
   program.describes.forEach(describe => {
-    lines.push(printDescribe(describe));
-    lines.push('');
+    allItems.push({ type: 'describe', item: describe, lineNumber: describe.lineNumber || 0 });
+  });
+
+  // Sort by line number to maintain original order
+  allItems.sort((a, b) => a.lineNumber - b.lineNumber);
+
+  // Group configs and add header if needed
+  let hasConfigs = false;
+  
+  allItems.forEach((entry, index) => {
+    if (entry.type === 'config' && !hasConfigs) {
+      lines.push('## Config');
+      hasConfigs = true;
+    }
+    
+    switch (entry.type) {
+      case 'config':
+        lines.push(printConfig(entry.item));
+        lines.push('');
+        break;
+      case 'route':
+        lines.push(printRoute(entry.item));
+        lines.push('');
+        break;
+      case 'pipeline':
+        lines.push(printPipeline(entry.item));
+        lines.push('');
+        break;
+      case 'variable':
+        lines.push(printVariable(entry.item));
+        // Only add empty line if there are more items after this variable
+        const nextNonVariable = allItems.slice(index + 1).find(item => item.type !== 'variable');
+        if (nextNonVariable) lines.push('');
+        break;
+      case 'describe':
+        lines.push(printDescribe(entry.item));
+        lines.push('');
+        break;
+    }
   });
 
   return lines.join('\n').trim();

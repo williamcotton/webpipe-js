@@ -73,6 +73,9 @@ var Parser = class {
     while (i < this.text.length && this.text[i] !== "\n") i++;
     return i;
   }
+  getLineNumber(pos) {
+    return this.text.slice(0, pos).split("\n").length;
+  }
   parseProgram() {
     this.skipSpaces();
     const configs = [];
@@ -86,26 +89,31 @@ var Parser = class {
       const start = this.pos;
       const cfg = this.tryParse(() => this.parseConfig());
       if (cfg) {
+        cfg.lineNumber = this.getLineNumber(start);
         configs.push(cfg);
         continue;
       }
       const namedPipe = this.tryParse(() => this.parseNamedPipeline());
       if (namedPipe) {
+        namedPipe.lineNumber = this.getLineNumber(start);
         pipelines.push(namedPipe);
         continue;
       }
       const variable = this.tryParse(() => this.parseVariable());
       if (variable) {
+        variable.lineNumber = this.getLineNumber(start);
         variables.push(variable);
         continue;
       }
       const route = this.tryParse(() => this.parseRoute());
       if (route) {
+        route.lineNumber = this.getLineNumber(start);
         routes.push(route);
         continue;
       }
       const describe = this.tryParse(() => this.parseDescribe());
       if (describe) {
+        describe.lineNumber = this.getLineNumber(start);
         describes.push(describe);
         continue;
       }
@@ -659,28 +667,52 @@ function printDescribe(describe) {
 }
 function prettyPrint(program) {
   const lines = [];
-  if (program.configs.length > 0) {
-    lines.push("## Config");
-    program.configs.forEach((config) => {
-      lines.push(printConfig(config));
-      lines.push("");
-    });
-  }
+  const allItems = [];
+  program.configs.forEach((config) => {
+    allItems.push({ type: "config", item: config, lineNumber: config.lineNumber || 0 });
+  });
   program.routes.forEach((route) => {
-    lines.push(printRoute(route));
-    lines.push("");
+    allItems.push({ type: "route", item: route, lineNumber: route.lineNumber || 0 });
   });
   program.pipelines.forEach((pipeline) => {
-    lines.push(printPipeline(pipeline));
-    lines.push("");
+    allItems.push({ type: "pipeline", item: pipeline, lineNumber: pipeline.lineNumber || 0 });
   });
   program.variables.forEach((variable) => {
-    lines.push(printVariable(variable));
+    allItems.push({ type: "variable", item: variable, lineNumber: variable.lineNumber || 0 });
   });
-  if (program.variables.length > 0) lines.push("");
   program.describes.forEach((describe) => {
-    lines.push(printDescribe(describe));
-    lines.push("");
+    allItems.push({ type: "describe", item: describe, lineNumber: describe.lineNumber || 0 });
+  });
+  allItems.sort((a, b) => a.lineNumber - b.lineNumber);
+  let hasConfigs = false;
+  allItems.forEach((entry, index) => {
+    if (entry.type === "config" && !hasConfigs) {
+      lines.push("## Config");
+      hasConfigs = true;
+    }
+    switch (entry.type) {
+      case "config":
+        lines.push(printConfig(entry.item));
+        lines.push("");
+        break;
+      case "route":
+        lines.push(printRoute(entry.item));
+        lines.push("");
+        break;
+      case "pipeline":
+        lines.push(printPipeline(entry.item));
+        lines.push("");
+        break;
+      case "variable":
+        lines.push(printVariable(entry.item));
+        const nextNonVariable = allItems.slice(index + 1).find((item) => item.type !== "variable");
+        if (nextNonVariable) lines.push("");
+        break;
+      case "describe":
+        lines.push(printDescribe(entry.item));
+        lines.push("");
+        break;
+    }
   });
   return lines.join("\n").trim();
 }

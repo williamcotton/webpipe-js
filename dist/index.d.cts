@@ -8,6 +8,7 @@ interface Program {
 interface Config {
     name: string;
     properties: ConfigProperty[];
+    lineNumber?: number;
 }
 interface ConfigProperty {
     key: string;
@@ -30,16 +31,19 @@ type ConfigValue = {
 interface NamedPipeline {
     name: string;
     pipeline: Pipeline;
+    lineNumber?: number;
 }
 interface Variable {
     varType: string;
     name: string;
     value: string;
+    lineNumber?: number;
 }
 interface Route {
     method: string;
     path: string;
     pipeline: PipelineRef;
+    lineNumber?: number;
 }
 type PipelineRef = {
     kind: 'Inline';
@@ -78,6 +82,7 @@ interface Describe {
     name: string;
     mocks: Mock[];
     tests: It[];
+    lineNumber?: number;
 }
 interface Mock {
     target: string;
