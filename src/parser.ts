@@ -176,7 +176,7 @@ class Parser {
       const text = this.consumeWhile((ch) => ch !== '\n');
       return {
         type: 'inline',
-        text: text.trim(),
+        text: text,
         style: '#',
         lineNumber: this.getLineNumber(start)
       };
@@ -187,7 +187,7 @@ class Parser {
       const text = this.consumeWhile((ch) => ch !== '\n');
       return {
         type: 'inline',
-        text: text.trim(),
+        text: text,
         style: '//',
         lineNumber: this.getLineNumber(start)
       };
@@ -200,11 +200,13 @@ class Parser {
     const start = this.pos;
     
     if (this.text.startsWith('#', this.pos)) {
-      this.pos++; // Skip #
-      const text = this.consumeWhile((ch) => ch !== '\n');
+      const originalPos = this.pos;
+      this.pos++; // Skip first #
+      const restOfLine = this.consumeWhile((ch) => ch !== '\n');
+      // Store the complete original comment text (without the first #)
       return {
         type: 'standalone',
-        text: text.trim(),
+        text: restOfLine,
         style: '#',
         lineNumber: this.getLineNumber(start)
       };
@@ -215,7 +217,7 @@ class Parser {
       const text = this.consumeWhile((ch) => ch !== '\n');
       return {
         type: 'standalone',
-        text: text.trim(),
+        text: text,
         style: '//',
         lineNumber: this.getLineNumber(start)
       };
@@ -903,6 +905,14 @@ export function printTest(test: It): string {
 }
 
 export function printComment(comment: Comment): string {
+  // For # comments, if text starts with # (like "# Blog article"), don't add space
+  // For // comments, if text is empty or starts with space, don't add extra space
+  if (comment.style === '#' && comment.text.startsWith('#')) {
+    return `${comment.style}${comment.text}`;
+  }
+  if (comment.text === '' || comment.text.startsWith(' ')) {
+    return `${comment.style}${comment.text}`;
+  }
   return `${comment.style} ${comment.text}`;
 }
 
@@ -1000,7 +1010,7 @@ export function prettyPrint(program: Program): string {
     }
   });
 
-  return lines.join('\n').trim();
+  return lines.join('\n').trim() + '\n';
 }
 
 export function formatConfigValue(value: ConfigValue): string {

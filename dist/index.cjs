@@ -85,7 +85,7 @@ var Parser = class {
       const text = this.consumeWhile((ch) => ch !== "\n");
       return {
         type: "inline",
-        text: text.trim(),
+        text,
         style: "#",
         lineNumber: this.getLineNumber(start)
       };
@@ -95,7 +95,7 @@ var Parser = class {
       const text = this.consumeWhile((ch) => ch !== "\n");
       return {
         type: "inline",
-        text: text.trim(),
+        text,
         style: "//",
         lineNumber: this.getLineNumber(start)
       };
@@ -105,11 +105,12 @@ var Parser = class {
   parseStandaloneComment() {
     const start = this.pos;
     if (this.text.startsWith("#", this.pos)) {
+      const originalPos = this.pos;
       this.pos++;
-      const text = this.consumeWhile((ch) => ch !== "\n");
+      const restOfLine = this.consumeWhile((ch) => ch !== "\n");
       return {
         type: "standalone",
-        text: text.trim(),
+        text: restOfLine,
         style: "#",
         lineNumber: this.getLineNumber(start)
       };
@@ -119,7 +120,7 @@ var Parser = class {
       const text = this.consumeWhile((ch) => ch !== "\n");
       return {
         type: "standalone",
-        text: text.trim(),
+        text,
         style: "//",
         lineNumber: this.getLineNumber(start)
       };
@@ -735,6 +736,12 @@ function printTest(test) {
   return lines.join("\n");
 }
 function printComment(comment) {
+  if (comment.style === "#" && comment.text.startsWith("#")) {
+    return `${comment.style}${comment.text}`;
+  }
+  if (comment.text === "" || comment.text.startsWith(" ")) {
+    return `${comment.style}${comment.text}`;
+  }
   return `${comment.style} ${comment.text}`;
 }
 function printDescribe(describe) {
@@ -812,7 +819,7 @@ function prettyPrint(program) {
         break;
     }
   });
-  return lines.join("\n").trim();
+  return lines.join("\n").trim() + "\n";
 }
 function formatConfigValue(value) {
   switch (value.kind) {
