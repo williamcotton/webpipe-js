@@ -51,10 +51,12 @@ type PipelineRef = {
 interface Pipeline {
     steps: PipelineStep[];
 }
+type ConfigType = 'backtick' | 'quoted' | 'identifier';
 type PipelineStep = {
     kind: 'Regular';
     name: string;
     config: string;
+    configType: ConfigType;
 } | {
     kind: 'Result';
     branches: ResultBranch[];
@@ -138,8 +140,8 @@ declare function printDescribe(describe: Describe): string;
 declare function prettyPrint(program: Program): string;
 declare function formatConfigValue(value: ConfigValue): string;
 declare function formatPipelineStep(step: PipelineStep, indent?: string): string;
-declare function formatStepConfig(config: string): string;
+declare function formatStepConfig(config: string, configType: ConfigType): string;
 declare function formatPipelineRef(ref: PipelineRef): string[];
 declare function formatWhen(when: When): string;
 
-export { type Condition, type Config, type ConfigProperty, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printCondition, printConfig, printDescribe, printMock, printPipeline, printRoute, printTest, printVariable };
+export { type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printCondition, printConfig, printDescribe, printMock, printPipeline, printRoute, printTest, printVariable };

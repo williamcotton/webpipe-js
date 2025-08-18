@@ -197,11 +197,11 @@ var Parser = class {
   }
   parseStepConfig() {
     const bt = this.tryParse(() => this.parseBacktickString());
-    if (bt !== null) return bt;
+    if (bt !== null) return { config: bt, configType: "backtick" };
     const dq = this.tryParse(() => this.parseQuotedString());
-    if (dq !== null) return dq;
+    if (dq !== null) return { config: dq, configType: "quoted" };
     const id = this.tryParse(() => this.parseIdentifier());
-    if (id !== null) return id;
+    if (id !== null) return { config: id, configType: "identifier" };
     throw new ParseFailure("step-config", this.pos);
   }
   parseConfigValue() {
@@ -273,9 +273,9 @@ var Parser = class {
     const name = this.parseIdentifier();
     this.expect(":");
     this.skipInlineSpaces();
-    const config = this.parseStepConfig();
+    const { config, configType } = this.parseStepConfig();
     this.skipSpaces();
-    return { kind: "Regular", name, config };
+    return { kind: "Regular", name, config, configType };
   }
   parseResultStep() {
     this.skipSpaces();
@@ -655,7 +655,7 @@ function formatConfigValue(value) {
 }
 function formatPipelineStep(step, indent = "  ") {
   if (step.kind === "Regular") {
-    return `${indent}|> ${step.name}: ${formatStepConfig(step.config)}`;
+    return `${indent}|> ${step.name}: ${formatStepConfig(step.config, step.configType)}`;
   } else {
     const lines = [`${indent}|> result`];
     step.branches.forEach((branch) => {
@@ -668,32 +668,15 @@ function formatPipelineStep(step, indent = "  ") {
     return lines.join("\n");
   }
 }
-function formatStepConfig(config) {
-  if (config.includes("\n") || config.includes("{") || config.includes("[") || config.includes(".") || config.includes("(")) {
-    return `\`${config}\``;
-  } else if (config.includes(" ")) {
-    return `"${config}"`;
-  } else if (isAuthStringValue(config)) {
-    return `"${config}"`;
-  } else {
-    return config;
+function formatStepConfig(config, configType) {
+  switch (configType) {
+    case "backtick":
+      return `\`${config}\``;
+    case "quoted":
+      return `"${config}"`;
+    case "identifier":
+      return config;
   }
-}
-function isAuthStringValue(config) {
-  const authValues = [
-    "login",
-    "logout",
-    "register",
-    "required",
-    "optional"
-  ];
-  if (authValues.includes(config)) {
-    return true;
-  }
-  if (config.startsWith("type:")) {
-    return true;
-  }
-  return false;
 }
 function formatPipelineRef(ref) {
   if (ref.kind === "Named") {
