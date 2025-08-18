@@ -30,6 +30,7 @@ __export(index_exports, {
   parseProgram: () => parseProgram,
   parseProgramWithDiagnostics: () => parseProgramWithDiagnostics,
   prettyPrint: () => prettyPrint,
+  printComment: () => printComment,
   printCondition: () => printCondition,
   printConfig: () => printConfig,
   printDescribe: () => printDescribe,
@@ -76,17 +77,73 @@ var Parser = class {
   getLineNumber(pos) {
     return this.text.slice(0, pos).split("\n").length;
   }
+  parseInlineComment() {
+    this.skipInlineSpaces();
+    const start = this.pos;
+    if (this.text.startsWith("#", this.pos)) {
+      this.pos++;
+      const text = this.consumeWhile((ch) => ch !== "\n");
+      return {
+        type: "inline",
+        text: text.trim(),
+        style: "#",
+        lineNumber: this.getLineNumber(start)
+      };
+    }
+    if (this.text.startsWith("//", this.pos)) {
+      this.pos += 2;
+      const text = this.consumeWhile((ch) => ch !== "\n");
+      return {
+        type: "inline",
+        text: text.trim(),
+        style: "//",
+        lineNumber: this.getLineNumber(start)
+      };
+    }
+    return null;
+  }
+  parseStandaloneComment() {
+    const start = this.pos;
+    if (this.text.startsWith("#", this.pos)) {
+      this.pos++;
+      const text = this.consumeWhile((ch) => ch !== "\n");
+      return {
+        type: "standalone",
+        text: text.trim(),
+        style: "#",
+        lineNumber: this.getLineNumber(start)
+      };
+    }
+    if (this.text.startsWith("//", this.pos)) {
+      this.pos += 2;
+      const text = this.consumeWhile((ch) => ch !== "\n");
+      return {
+        type: "standalone",
+        text: text.trim(),
+        style: "//",
+        lineNumber: this.getLineNumber(start)
+      };
+    }
+    return null;
+  }
   parseProgram() {
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const configs = [];
     const pipelines = [];
     const variables = [];
     const routes = [];
     const describes = [];
+    const comments = [];
     while (!this.eof()) {
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
       if (this.eof()) break;
       const start = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (comment) {
+        comments.push(comment);
+        if (this.cur() === "\n") this.pos++;
+        continue;
+      }
       const cfg = this.tryParse(() => this.parseConfig());
       if (cfg) {
         cfg.lineNumber = this.getLineNumber(start);
@@ -132,7 +189,7 @@ var Parser = class {
       const start = Math.max(0, idx);
       this.report("Unclosed backtick-delimited string", start, start + 1, "warning");
     }
-    return { configs, pipelines, variables, routes, describes };
+    return { configs, pipelines, variables, routes, describes, comments };
   }
   eof() {
     return this.pos >= this.len;
@@ -171,6 +228,9 @@ var Parser = class {
       }
       break;
     }
+  }
+  skipWhitespaceOnly() {
+    this.consumeWhile((ch) => ch === " " || ch === "	" || ch === "\r" || ch === "\n");
   }
   skipInlineSpaces() {
     this.consumeWhile((ch) => ch === " " || ch === "	" || ch === "\r");
@@ -299,6 +359,7 @@ var Parser = class {
     const name = this.parseIdentifier();
     this.skipInlineSpaces();
     this.expect("{");
+    const inlineComment = this.parseInlineComment();
     this.skipSpaces();
     const properties = [];
     while (true) {
@@ -309,8 +370,8 @@ var Parser = class {
     }
     this.skipSpaces();
     this.expect("}");
-    this.skipSpaces();
-    return { name, properties };
+    this.skipWhitespaceOnly();
+    return { name, properties, inlineComment: inlineComment || void 0 };
   }
   parsePipelineStep() {
     const result = this.tryParse(() => this.parseResultStep());
@@ -318,22 +379,22 @@ var Parser = class {
     return this.parseRegularStep();
   }
   parseRegularStep() {
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     this.expect("|>");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
     this.expect(":");
     this.skipInlineSpaces();
     const { config, configType } = this.parseStepConfig();
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     return { kind: "Regular", name, config, configType };
   }
   parseResultStep() {
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     this.expect("|>");
     this.skipInlineSpaces();
     this.expect("result");
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const branches = [];
     while (true) {
       const br = this.tryParse(() => this.parseResultBranch());
@@ -369,7 +430,7 @@ var Parser = class {
     const steps = [];
     while (true) {
       const save = this.pos;
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
       if (!this.text.startsWith("|>", this.pos)) {
         this.pos = save;
         break;
@@ -386,19 +447,20 @@ var Parser = class {
     const name = this.parseIdentifier();
     this.skipInlineSpaces();
     this.expect("=");
+    const inlineComment = this.parseInlineComment();
     this.skipInlineSpaces();
     const beforePipeline = this.pos;
     const pipeline = this.parsePipeline();
     const end = this.pos;
     this.pipelineRanges.set(name, { start, end });
-    this.skipSpaces();
-    return { name, pipeline };
+    this.skipWhitespaceOnly();
+    return { name, pipeline, inlineComment: inlineComment || void 0 };
   }
   parsePipelineRef() {
     const inline = this.tryParse(() => this.parsePipeline());
     if (inline && inline.steps.length > 0) return { kind: "Inline", pipeline: inline };
     const named = this.tryParse(() => {
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
       this.expect("|>");
       this.skipInlineSpaces();
       this.expect("pipeline:");
@@ -418,19 +480,21 @@ var Parser = class {
     this.expect("=");
     this.skipInlineSpaces();
     const value = this.parseBacktickString();
+    const inlineComment = this.parseInlineComment();
     const end = this.pos;
     this.variableRanges.set(`${varType}::${name}`, { start, end });
-    this.skipSpaces();
-    return { varType, name, value };
+    this.skipWhitespaceOnly();
+    return { varType, name, value, inlineComment: inlineComment || void 0 };
   }
   parseRoute() {
     const method = this.parseMethod();
     this.skipInlineSpaces();
-    const path = this.consumeWhile((c) => c !== " " && c !== "\n");
+    const path = this.consumeWhile((c) => c !== " " && c !== "\n" && c !== "#");
+    const inlineComment = this.parseInlineComment();
     this.skipSpaces();
     const pipeline = this.parsePipelineRef();
-    this.skipSpaces();
-    return { method, path, pipeline };
+    this.skipWhitespaceOnly();
+    return { method, path, pipeline, inlineComment: inlineComment || void 0 };
   }
   parseWhen() {
     const calling = this.tryParse(() => {
@@ -556,6 +620,7 @@ var Parser = class {
     this.expect('"');
     const name = this.consumeWhile((c) => c !== '"');
     this.expect('"');
+    const inlineComment = this.parseInlineComment();
     this.skipSpaces();
     const mocks = [];
     while (true) {
@@ -570,7 +635,7 @@ var Parser = class {
       if (!it) break;
       tests.push(it);
     }
-    return { name, mocks, tests };
+    return { name, mocks, tests, inlineComment: inlineComment || void 0 };
   }
 };
 function parseProgram(text) {
@@ -600,14 +665,24 @@ var ParseFailure = class extends Error {
 };
 function printRoute(route) {
   const lines = [];
-  lines.push(`${route.method} ${route.path}`);
+  const routeLine = `${route.method} ${route.path}`;
+  if (route.inlineComment) {
+    lines.push(`${routeLine} ${printComment(route.inlineComment)}`);
+  } else {
+    lines.push(routeLine);
+  }
   const pipelineLines = formatPipelineRef(route.pipeline);
   pipelineLines.forEach((line) => lines.push(line));
   return lines.join("\n");
 }
 function printConfig(config) {
   const lines = [];
-  lines.push(`config ${config.name} {`);
+  const configLine = `config ${config.name} {`;
+  if (config.inlineComment) {
+    lines.push(`${configLine} ${printComment(config.inlineComment)}`);
+  } else {
+    lines.push(configLine);
+  }
   config.properties.forEach((prop) => {
     const value = formatConfigValue(prop.value);
     lines.push(`  ${prop.key}: ${value}`);
@@ -617,14 +692,23 @@ function printConfig(config) {
 }
 function printPipeline(pipeline) {
   const lines = [];
-  lines.push(`pipeline ${pipeline.name} =`);
+  const pipelineLine = `pipeline ${pipeline.name} =`;
+  if (pipeline.inlineComment) {
+    lines.push(`${pipelineLine} ${printComment(pipeline.inlineComment)}`);
+  } else {
+    lines.push(pipelineLine);
+  }
   pipeline.pipeline.steps.forEach((step) => {
     lines.push(formatPipelineStep(step));
   });
   return lines.join("\n");
 }
 function printVariable(variable) {
-  return `${variable.varType} ${variable.name} = \`${variable.value}\``;
+  const variableLine = `${variable.varType} ${variable.name} = \`${variable.value}\``;
+  if (variable.inlineComment) {
+    return `${variableLine} ${printComment(variable.inlineComment)}`;
+  }
+  return variableLine;
 }
 function printMock(mock, indent = "  ") {
   return `${indent}with mock ${mock.target} returning \`${mock.returnValue}\``;
@@ -650,9 +734,17 @@ function printTest(test) {
   });
   return lines.join("\n");
 }
+function printComment(comment) {
+  return `${comment.style} ${comment.text}`;
+}
 function printDescribe(describe) {
   const lines = [];
-  lines.push(`describe "${describe.name}"`);
+  const describeLine = `describe "${describe.name}"`;
+  if (describe.inlineComment) {
+    lines.push(`${describeLine} ${printComment(describe.inlineComment)}`);
+  } else {
+    lines.push(describeLine);
+  }
   describe.mocks.forEach((mock) => {
     lines.push(printMock(mock));
   });
@@ -683,6 +775,9 @@ function prettyPrint(program) {
   program.describes.forEach((describe) => {
     allItems.push({ type: "describe", item: describe, lineNumber: describe.lineNumber || 0 });
   });
+  program.comments.forEach((comment) => {
+    allItems.push({ type: "comment", item: comment, lineNumber: comment.lineNumber || 0 });
+  });
   allItems.sort((a, b) => a.lineNumber - b.lineNumber);
   let hasConfigs = false;
   allItems.forEach((entry, index) => {
@@ -691,6 +786,9 @@ function prettyPrint(program) {
       hasConfigs = true;
     }
     switch (entry.type) {
+      case "comment":
+        lines.push(printComment(entry.item));
+        break;
       case "config":
         lines.push(printConfig(entry.item));
         lines.push("");
@@ -786,6 +884,7 @@ function formatWhen(when) {
   parseProgram,
   parseProgramWithDiagnostics,
   prettyPrint,
+  printComment,
   printCondition,
   printConfig,
   printDescribe,

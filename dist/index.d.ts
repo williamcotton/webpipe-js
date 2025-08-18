@@ -4,11 +4,19 @@ interface Program {
     variables: Variable[];
     routes: Route[];
     describes: Describe[];
+    comments: Comment[];
+}
+interface Comment {
+    type: 'standalone' | 'inline';
+    text: string;
+    style: '#' | '//';
+    lineNumber?: number;
 }
 interface Config {
     name: string;
     properties: ConfigProperty[];
     lineNumber?: number;
+    inlineComment?: Comment;
 }
 interface ConfigProperty {
     key: string;
@@ -32,18 +40,21 @@ interface NamedPipeline {
     name: string;
     pipeline: Pipeline;
     lineNumber?: number;
+    inlineComment?: Comment;
 }
 interface Variable {
     varType: string;
     name: string;
     value: string;
     lineNumber?: number;
+    inlineComment?: Comment;
 }
 interface Route {
     method: string;
     path: string;
     pipeline: PipelineRef;
     lineNumber?: number;
+    inlineComment?: Comment;
 }
 type PipelineRef = {
     kind: 'Inline';
@@ -83,6 +94,7 @@ interface Describe {
     mocks: Mock[];
     tests: It[];
     lineNumber?: number;
+    inlineComment?: Comment;
 }
 interface Mock {
     target: string;
@@ -141,6 +153,7 @@ declare function printVariable(variable: Variable): string;
 declare function printMock(mock: Mock, indent?: string): string;
 declare function printCondition(condition: Condition, indent?: string): string;
 declare function printTest(test: It): string;
+declare function printComment(comment: Comment): string;
 declare function printDescribe(describe: Describe): string;
 declare function prettyPrint(program: Program): string;
 declare function formatConfigValue(value: ConfigValue): string;
@@ -149,4 +162,4 @@ declare function formatStepConfig(config: string, configType: ConfigType): strin
 declare function formatPipelineRef(ref: PipelineRef): string[];
 declare function formatWhen(when: When): string;
 
-export { type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printCondition, printConfig, printDescribe, printMock, printPipeline, printRoute, printTest, printVariable };
+export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printMock, printPipeline, printRoute, printTest, printVariable };
