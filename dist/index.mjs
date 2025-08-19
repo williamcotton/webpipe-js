@@ -742,12 +742,7 @@ function prettyPrint(program) {
     allItems.push({ type: "comment", item: comment, lineNumber: comment.lineNumber || 0 });
   });
   allItems.sort((a, b) => a.lineNumber - b.lineNumber);
-  let hasConfigs = false;
   allItems.forEach((entry, index) => {
-    if (entry.type === "config" && !hasConfigs) {
-      lines.push("## Config");
-      hasConfigs = true;
-    }
     switch (entry.type) {
       case "comment":
         lines.push(printComment(entry.item));

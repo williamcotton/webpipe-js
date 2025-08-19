@@ -972,15 +972,7 @@ export function prettyPrint(program: Program): string {
   // Sort by line number to maintain original order
   allItems.sort((a, b) => a.lineNumber - b.lineNumber);
 
-  // Group configs and add header if needed
-  let hasConfigs = false;
-  
   allItems.forEach((entry, index) => {
-    if (entry.type === 'config' && !hasConfigs) {
-      lines.push('## Config');
-      hasConfigs = true;
-    }
-    
     switch (entry.type) {
       case 'comment':
         lines.push(printComment(entry.item));
