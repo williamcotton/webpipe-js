@@ -272,6 +272,54 @@ var Parser = class {
     if (id !== null) return { config: id, configType: "identifier" };
     throw new ParseFailure("step-config", this.pos);
   }
+  parseTag() {
+    this.expect("@");
+    const negated = this.cur() === "!";
+    if (negated) this.pos++;
+    const name = this.parseIdentifier();
+    let args = [];
+    if (this.cur() === "(") {
+      args = this.parseTagArgs();
+    }
+    return { name, negated, args };
+  }
+  parseTagArgs() {
+    this.expect("(");
+    const args = [];
+    this.skipInlineSpaces();
+    if (this.cur() === ")") {
+      throw new ParseFailure("empty tag arguments not allowed", this.pos);
+    }
+    args.push(this.parseIdentifier());
+    this.skipInlineSpaces();
+    while (this.cur() === ",") {
+      this.pos++;
+      this.skipInlineSpaces();
+      if (this.cur() === ")") {
+        throw new ParseFailure("trailing comma in tag arguments", this.pos);
+      }
+      args.push(this.parseIdentifier());
+      this.skipInlineSpaces();
+    }
+    this.expect(")");
+    return args;
+  }
+  parseTags() {
+    const tags = [];
+    while (!this.eof()) {
+      this.skipInlineSpaces();
+      const ch = this.cur();
+      if (ch === "\n" || ch === "\r" || ch === "#" || this.text.startsWith("//", this.pos)) {
+        break;
+      }
+      if (ch === "@") {
+        tags.push(this.parseTag());
+      } else {
+        break;
+      }
+    }
+    return tags;
+  }
   parseConfigValue() {
     const envWithDefault = this.tryParse(() => {
       this.expect("$");
@@ -343,8 +391,9 @@ var Parser = class {
     this.expect(":");
     this.skipInlineSpaces();
     const { config, configType } = this.parseStepConfig();
+    const tags = this.parseTags();
     this.skipWhitespaceOnly();
-    return { kind: "Regular", name, config, configType };
+    return { kind: "Regular", name, config, configType, tags };
   }
   parseResultStep() {
     this.skipWhitespaceOnly();
@@ -786,7 +835,9 @@ function formatConfigValue(value) {
 }
 function formatPipelineStep(step, indent = "  ") {
   if (step.kind === "Regular") {
-    return `${indent}|> ${step.name}: ${formatStepConfig(step.config, step.configType)}`;
+    const configPart = formatStepConfig(step.config, step.configType);
+    const tagsPart = step.tags.length > 0 ? " " + formatTags(step.tags) : "";
+    return `${indent}|> ${step.name}: ${configPart}${tagsPart}`;
   } else {
     const lines = [`${indent}|> result`];
     step.branches.forEach((branch) => {
@@ -808,6 +859,14 @@ function formatStepConfig(config, configType) {
     case "identifier":
       return config;
   }
+}
+function formatTags(tags) {
+  return tags.map(formatTag).join(" ");
+}
+function formatTag(tag) {
+  const negation = tag.negated ? "!" : "";
+  const args = tag.args.length > 0 ? `(${tag.args.join(",")})` : "";
+  return `@${negation}${tag.name}${args}`;
 }
 function formatPipelineRef(ref) {
   if (ref.kind === "Named") {
@@ -835,6 +894,8 @@ export {
   formatPipelineRef,
   formatPipelineStep,
   formatStepConfig,
+  formatTag,
+  formatTags,
   formatWhen,
   getPipelineRanges,
   getVariableRanges,

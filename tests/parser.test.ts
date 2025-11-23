@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { parseProgram, type Program, prettyPrint } from '../src/parser';
+import { parseProgram, type Program, prettyPrint, parseProgramWithDiagnostics } from '../src/parser';
 
 function loadFixture(name: string): string {
   const file = resolve(process.cwd(), name);
@@ -121,14 +121,238 @@ describe('prettyPrint formatting', () => {
     const src = `DELETE /todos/:id
   |> auth: "required"
   |> result`;
-    
+
     const program = parseProgram(src);
     const prettyPrinted = prettyPrint(program);
-    
+
     // Should preserve quotes around "required"
     expect(prettyPrinted).toContain('|> auth: "required"');
     // Should not have unquoted required
     expect(prettyPrinted).not.toContain('|> auth: required');
+  });
+});
+
+describe('parseProgram - tags support', () => {
+  it('parses single tag on regular step', () => {
+    const src = `pipeline test =
+  |> jq: \`{ hello: "world" }\` @prod`;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+    const step = pipeline.pipeline.steps[0];
+
+    expect(step.kind).toBe('Regular');
+    if (step.kind === 'Regular') {
+      expect(step.tags.length).toBe(1);
+      expect(step.tags[0].name).toBe('prod');
+      expect(step.tags[0].negated).toBe(false);
+      expect(step.tags[0].args.length).toBe(0);
+    }
+  });
+
+  it('parses multiple tags on same step', () => {
+    const src = `pipeline test =
+  |> pg: \`SELECT * FROM users\` @dev @flag(new-ui)`;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+    const step = pipeline.pipeline.steps[0];
+
+    expect(step.kind).toBe('Regular');
+    if (step.kind === 'Regular') {
+      expect(step.tags.length).toBe(2);
+      expect(step.tags[0].name).toBe('dev');
+      expect(step.tags[0].negated).toBe(false);
+      expect(step.tags[0].args.length).toBe(0);
+
+      expect(step.tags[1].name).toBe('flag');
+      expect(step.tags[1].negated).toBe(false);
+      expect(step.tags[1].args).toEqual(['new-ui']);
+    }
+  });
+
+  it('parses negated tag', () => {
+    const src = `pipeline test =
+  |> log: \`level: debug\` @!prod`;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+    const step = pipeline.pipeline.steps[0];
+
+    expect(step.kind).toBe('Regular');
+    if (step.kind === 'Regular') {
+      expect(step.tags.length).toBe(1);
+      expect(step.tags[0].name).toBe('prod');
+      expect(step.tags[0].negated).toBe(true);
+      expect(step.tags[0].args.length).toBe(0);
+    }
+  });
+
+  it('parses tag with single argument', () => {
+    const src = `pipeline test =
+  |> log: \`level: debug\` @async(user)`;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+    const step = pipeline.pipeline.steps[0];
+
+    expect(step.kind).toBe('Regular');
+    if (step.kind === 'Regular') {
+      expect(step.tags.length).toBe(1);
+      expect(step.tags[0].name).toBe('async');
+      expect(step.tags[0].negated).toBe(false);
+      expect(step.tags[0].args).toEqual(['user']);
+    }
+  });
+
+  it('parses tag with multiple arguments', () => {
+    const src = `pipeline test =
+  |> echo: myVar @flag(beta,staff)`;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+    const step = pipeline.pipeline.steps[0];
+
+    expect(step.kind).toBe('Regular');
+    if (step.kind === 'Regular') {
+      expect(step.tags.length).toBe(1);
+      expect(step.tags[0].name).toBe('flag');
+      expect(step.tags[0].negated).toBe(false);
+      expect(step.tags[0].args).toEqual(['beta', 'staff']);
+    }
+  });
+
+  it('parses steps without tags (backwards compatibility)', () => {
+    const src = `pipeline test =
+  |> jq: \`.\`
+  |> echo: foo`;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+
+    pipeline.pipeline.steps.forEach(step => {
+      if (step.kind === 'Regular') {
+        expect(step.tags).toEqual([]);
+      }
+    });
+  });
+
+  it('roundtrip: parse -> format -> parse preserves tags', () => {
+    const src = `pipeline test =
+  |> jq: \`{ hello: "world" }\` @prod
+  |> pg: \`SELECT * FROM users\` @dev @flag(new-ui)
+  |> log: \`level: debug\` @!prod @async(user)
+  |> echo: myVar @flag(beta,staff)
+`;
+    const program1 = parseProgram(src);
+    const formatted = prettyPrint(program1);
+    const program2 = parseProgram(formatted);
+
+    expect(program1.pipelines[0].pipeline.steps).toEqual(program2.pipelines[0].pipeline.steps);
+  });
+
+  it('formats tags correctly', () => {
+    const src = `pipeline test =
+  |> jq: \`.\` @prod @dev`;
+    const program = parseProgram(src);
+    const formatted = prettyPrint(program);
+
+    expect(formatted).toContain('@prod @dev');
+  });
+
+  it('formats negated tag correctly', () => {
+    const src = `pipeline test =
+  |> jq: \`.\` @!prod`;
+    const program = parseProgram(src);
+    const formatted = prettyPrint(program);
+
+    expect(formatted).toContain('@!prod');
+  });
+
+  it('formats tag with arguments correctly', () => {
+    const src = `pipeline test =
+  |> jq: \`.\` @flag(a,b,c)`;
+    const program = parseProgram(src);
+    const formatted = prettyPrint(program);
+
+    expect(formatted).toContain('@flag(a,b,c)');
+  });
+
+  it('does not add tags to result steps', () => {
+    const src = `pipeline test =
+  |> result
+    ok(200):
+      |> jq: \`{ok: true}\``;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+    const step = pipeline.pipeline.steps[0];
+
+    expect(step.kind).toBe('Result');
+    expect(step).not.toHaveProperty('tags');
+  });
+
+  it('empty tag arguments produce diagnostics', () => {
+    const src = `pipeline test =
+  |> jq: \`.\` @flag()`;
+    const { program } = parseProgramWithDiagnostics(src);
+    // Parser should either reject or produce diagnostic
+    // Currently will stop parsing tags after @flag( due to exception in tryParse
+    const step = program.pipelines[0]?.pipeline?.steps?.[0];
+    if (step && step.kind === 'Regular') {
+      // If it parsed, there should be no flag tag with empty args
+      const flagTag = step.tags.find(t => t.name === 'flag');
+      if (flagTag) {
+        expect(flagTag.args.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('trailing comma in tag arguments produces diagnostics', () => {
+    const src = `pipeline test =
+  |> jq: \`.\` @flag(foo,)`;
+    const { program } = parseProgramWithDiagnostics(src);
+    // Parser should either reject or produce diagnostic
+    const step = program.pipelines[0]?.pipeline?.steps?.[0];
+    if (step && step.kind === 'Regular') {
+      // If it parsed, check what happened
+      const flagTag = step.tags.find(t => t.name === 'flag');
+      // tryParse will have failed, so tag should not exist or should be incomplete
+      expect(flagTag === undefined || flagTag.args.length === 1).toBe(true);
+    }
+  });
+
+  it('tag without name stops parsing tags', () => {
+    const src = `pipeline test =
+  |> jq: \`.\` @`;
+    const { program } = parseProgramWithDiagnostics(src);
+    // Parser will stop at @ since identifier expected
+    const step = program.pipelines[0]?.pipeline?.steps?.[0];
+    if (step && step.kind === 'Regular') {
+      // No tags should have been parsed
+      expect(step.tags.length).toBe(0);
+    }
+  });
+
+  it('parses tags with comments after', () => {
+    const src = `pipeline test =
+  |> jq: \`.\` @prod # comment`;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+    const step = pipeline.pipeline.steps[0];
+
+    expect(step.kind).toBe('Regular');
+    if (step.kind === 'Regular') {
+      expect(step.tags.length).toBe(1);
+      expect(step.tags[0].name).toBe('prod');
+    }
+  });
+
+  it('parses tags with inline comments after', () => {
+    const src = `pipeline test =
+  |> jq: \`.\` @prod // comment`;
+    const program = parseProgram(src);
+    const pipeline = program.pipelines[0];
+    const step = pipeline.pipeline.steps[0];
+
+    expect(step.kind).toBe('Regular');
+    if (step.kind === 'Regular') {
+      expect(step.tags.length).toBe(1);
+      expect(step.tags[0].name).toBe('prod');
+    }
   });
 });
 

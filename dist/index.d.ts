@@ -67,11 +67,17 @@ interface Pipeline {
     steps: PipelineStep[];
 }
 type ConfigType = 'backtick' | 'quoted' | 'identifier';
+interface Tag {
+    name: string;
+    negated: boolean;
+    args: string[];
+}
 type PipelineStep = {
     kind: 'Regular';
     name: string;
     config: string;
     configType: ConfigType;
+    tags: Tag[];
 } | {
     kind: 'Result';
     branches: ResultBranch[];
@@ -159,7 +165,9 @@ declare function prettyPrint(program: Program): string;
 declare function formatConfigValue(value: ConfigValue): string;
 declare function formatPipelineStep(step: PipelineStep, indent?: string): string;
 declare function formatStepConfig(config: string, configType: ConfigType): string;
+declare function formatTags(tags: Tag[]): string;
+declare function formatTag(tag: Tag): string;
 declare function formatPipelineRef(ref: PipelineRef): string[];
 declare function formatWhen(when: When): string;
 
-export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printMock, printPipeline, printRoute, printTest, printVariable };
+export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Tag, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatTag, formatTags, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printMock, printPipeline, printRoute, printTest, printVariable };

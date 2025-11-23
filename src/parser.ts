@@ -65,8 +65,14 @@ export interface Pipeline {
 
 export type ConfigType = 'backtick' | 'quoted' | 'identifier';
 
+export interface Tag {
+  name: string;      // e.g. "prod", "async", "flag"
+  negated: boolean;  // true for @!prod
+  args: string[];    // ["new-ui", "beta"] for @flag(new-ui,beta)
+}
+
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; config: string; configType: ConfigType }
+  | { kind: 'Regular'; name: string; config: string; configType: ConfigType; tags: Tag[] }
   | { kind: 'Result'; branches: ResultBranch[] };
 
 export interface ResultBranch {
@@ -438,6 +444,83 @@ class Parser {
     throw new ParseFailure('step-config', this.pos);
   }
 
+  private parseTag(): Tag {
+    // Current position should be at '@'
+    this.expect('@');
+
+    // Check for negation
+    const negated = this.cur() === '!';
+    if (negated) this.pos++;
+
+    // Parse tag name
+    const name = this.parseIdentifier();
+
+    // Parse optional arguments
+    let args: string[] = [];
+    if (this.cur() === '(') {
+      args = this.parseTagArgs();
+    }
+
+    return { name, negated, args };
+  }
+
+  private parseTagArgs(): string[] {
+    this.expect('(');
+    const args: string[] = [];
+
+    // Empty parentheses not allowed
+    this.skipInlineSpaces();
+    if (this.cur() === ')') {
+      throw new ParseFailure('empty tag arguments not allowed', this.pos);
+    }
+
+    // Parse first arg
+    args.push(this.parseIdentifier());
+    this.skipInlineSpaces();
+
+    // Parse remaining args (comma-separated)
+    while (this.cur() === ',') {
+      this.pos++; // consume comma
+      this.skipInlineSpaces();
+
+      // No trailing comma allowed
+      if (this.cur() === ')') {
+        throw new ParseFailure('trailing comma in tag arguments', this.pos);
+      }
+
+      args.push(this.parseIdentifier());
+      this.skipInlineSpaces();
+    }
+
+    this.expect(')');
+    return args;
+  }
+
+  private parseTags(): Tag[] {
+    const tags: Tag[] = [];
+
+    // Keep parsing tags until we hit EOL or EOF
+    while (!this.eof()) {
+      this.skipInlineSpaces();
+
+      // Check for EOL or EOF
+      const ch = this.cur();
+      if (ch === '\n' || ch === '\r' || ch === '#' || this.text.startsWith('//', this.pos)) {
+        break;
+      }
+
+      // If we see '@', parse a tag
+      if (ch === '@') {
+        tags.push(this.parseTag());
+      } else {
+        // Unexpected character after step config
+        break;
+      }
+    }
+
+    return tags;
+  }
+
   private parseConfigValue(): ConfigValue {
     const envWithDefault = this.tryParse(() => {
       this.expect('$');
@@ -518,8 +601,12 @@ class Parser {
     this.expect(':');
     this.skipInlineSpaces();
     const { config, configType } = this.parseStepConfig();
+
+    // Parse tags (after config, before EOL)
+    const tags = this.parseTags();
+
     this.skipWhitespaceOnly();
-    return { kind: 'Regular', name, config, configType };
+    return { kind: 'Regular', name, config, configType, tags };
   }
 
   private parseResultStep(): PipelineStep {
@@ -1020,7 +1107,9 @@ export function formatConfigValue(value: ConfigValue): string {
 
 export function formatPipelineStep(step: PipelineStep, indent: string = '  '): string {
   if (step.kind === 'Regular') {
-    return `${indent}|> ${step.name}: ${formatStepConfig(step.config, step.configType)}`;
+    const configPart = formatStepConfig(step.config, step.configType);
+    const tagsPart = step.tags.length > 0 ? ' ' + formatTags(step.tags) : '';
+    return `${indent}|> ${step.name}: ${configPart}${tagsPart}`;
   } else {
     const lines: string[] = [`${indent}|> result`];
     step.branches.forEach(branch => {
@@ -1045,6 +1134,16 @@ export function formatStepConfig(config: string, configType: ConfigType): string
     case 'identifier':
       return config;
   }
+}
+
+export function formatTags(tags: Tag[]): string {
+  return tags.map(formatTag).join(' ');
+}
+
+export function formatTag(tag: Tag): string {
+  const negation = tag.negated ? '!' : '';
+  const args = tag.args.length > 0 ? `(${tag.args.join(',')})` : '';
+  return `@${negation}${tag.name}${args}`;
 }
 
 export function formatPipelineRef(ref: PipelineRef): string[] {
