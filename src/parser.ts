@@ -5,6 +5,9 @@ export interface Program {
   routes: Route[];
   describes: Describe[];
   comments: Comment[];
+  graphqlSchema?: GraphQLSchema;
+  queries: QueryResolver[];
+  mutations: MutationResolver[];
 }
 
 export interface Comment {
@@ -43,6 +46,26 @@ export interface Variable {
   varType: string;
   name: string;
   value: string;
+  lineNumber?: number;
+  inlineComment?: Comment;
+}
+
+export interface GraphQLSchema {
+  sdl: string;
+  lineNumber?: number;
+  inlineComment?: Comment;
+}
+
+export interface QueryResolver {
+  name: string;
+  pipeline: Pipeline;
+  lineNumber?: number;
+  inlineComment?: Comment;
+}
+
+export interface MutationResolver {
+  name: string;
+  pipeline: Pipeline;
   lineNumber?: number;
   inlineComment?: Comment;
 }
@@ -241,6 +264,9 @@ class Parser {
     const routes: Route[] = [];
     const describes: Describe[] = [];
     const comments: Comment[] = [];
+    let graphqlSchema: GraphQLSchema | undefined;
+    const queries: QueryResolver[] = [];
+    const mutations: MutationResolver[] = [];
 
     while (!this.eof()) {
       this.skipWhitespaceOnly();
@@ -260,6 +286,27 @@ class Parser {
       if (cfg) {
         cfg.lineNumber = this.getLineNumber(start);
         configs.push(cfg);
+        continue;
+      }
+
+      const schema = this.tryParse(() => this.parseGraphQLSchema());
+      if (schema) {
+        schema.lineNumber = this.getLineNumber(start);
+        graphqlSchema = schema;
+        continue;
+      }
+
+      const query = this.tryParse(() => this.parseQueryResolver());
+      if (query) {
+        query.lineNumber = this.getLineNumber(start);
+        queries.push(query);
+        continue;
+      }
+
+      const mutation = this.tryParse(() => this.parseMutationResolver());
+      if (mutation) {
+        mutation.lineNumber = this.getLineNumber(start);
+        mutations.push(mutation);
         continue;
       }
 
@@ -308,7 +355,7 @@ class Parser {
       this.report('Unclosed backtick-delimited string', start, start + 1, 'warning');
     }
 
-    return { configs, pipelines, variables, routes, describes, comments };
+    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations };
   }
 
   private eof(): boolean { return this.pos >= this.len; }
@@ -711,6 +758,45 @@ class Parser {
     return { varType, name, value, inlineComment: inlineComment || undefined };
   }
 
+  private parseGraphQLSchema(): GraphQLSchema {
+    this.expect('graphql');
+    this.skipInlineSpaces();
+    this.expect('schema');
+    this.skipInlineSpaces();
+    this.expect('=');
+    const inlineComment = this.parseInlineComment();
+    this.skipInlineSpaces();
+    const sdl = this.parseBacktickString();
+    this.skipWhitespaceOnly();
+    return { sdl, inlineComment: inlineComment || undefined };
+  }
+
+  private parseQueryResolver(): QueryResolver {
+    this.expect('query');
+    this.skipInlineSpaces();
+    const name = this.parseIdentifier();
+    this.skipInlineSpaces();
+    this.expect('=');
+    const inlineComment = this.parseInlineComment();
+    this.skipWhitespaceOnly();
+    const pipeline = this.parsePipeline();
+    this.skipWhitespaceOnly();
+    return { name, pipeline, inlineComment: inlineComment || undefined };
+  }
+
+  private parseMutationResolver(): MutationResolver {
+    this.expect('mutation');
+    this.skipInlineSpaces();
+    const name = this.parseIdentifier();
+    this.skipInlineSpaces();
+    this.expect('=');
+    const inlineComment = this.parseInlineComment();
+    this.skipWhitespaceOnly();
+    const pipeline = this.parsePipeline();
+    this.skipWhitespaceOnly();
+    return { name, pipeline, inlineComment: inlineComment || undefined };
+  }
+
   private parseRoute(): Route {
     const method = this.parseMethod();
     this.skipInlineSpaces();
@@ -962,6 +1048,42 @@ export function printVariable(variable: Variable): string {
   return variableLine;
 }
 
+export function printGraphQLSchema(schema: GraphQLSchema): string {
+  const schemaLine = `graphql schema = \`${schema.sdl}\``;
+  if (schema.inlineComment) {
+    return `${schemaLine} ${printComment(schema.inlineComment)}`;
+  }
+  return schemaLine;
+}
+
+export function printQueryResolver(query: QueryResolver): string {
+  const lines: string[] = [];
+  const queryLine = `query ${query.name} =`;
+  if (query.inlineComment) {
+    lines.push(`${queryLine} ${printComment(query.inlineComment)}`);
+  } else {
+    lines.push(queryLine);
+  }
+  query.pipeline.steps.forEach(step => {
+    lines.push(formatPipelineStep(step));
+  });
+  return lines.join('\n');
+}
+
+export function printMutationResolver(mutation: MutationResolver): string {
+  const lines: string[] = [];
+  const mutationLine = `mutation ${mutation.name} =`;
+  if (mutation.inlineComment) {
+    lines.push(`${mutationLine} ${printComment(mutation.inlineComment)}`);
+  } else {
+    lines.push(mutationLine);
+  }
+  mutation.pipeline.steps.forEach(step => {
+    lines.push(formatPipelineStep(step));
+  });
+  return lines.join('\n');
+}
+
 export function printMock(mock: Mock, indent: string = '  '): string {
   return `${indent}with mock ${mock.target} returning \`${mock.returnValue}\``;
 }
@@ -1031,27 +1153,39 @@ export function prettyPrint(program: Program): string {
 
   // Collect all items with their line numbers and types
   const allItems: { type: string; item: any; lineNumber: number }[] = [];
-  
+
   program.configs.forEach(config => {
     allItems.push({ type: 'config', item: config, lineNumber: config.lineNumber || 0 });
   });
-  
+
+  if (program.graphqlSchema) {
+    allItems.push({ type: 'graphqlSchema', item: program.graphqlSchema, lineNumber: program.graphqlSchema.lineNumber || 0 });
+  }
+
+  program.queries.forEach(query => {
+    allItems.push({ type: 'query', item: query, lineNumber: query.lineNumber || 0 });
+  });
+
+  program.mutations.forEach(mutation => {
+    allItems.push({ type: 'mutation', item: mutation, lineNumber: mutation.lineNumber || 0 });
+  });
+
   program.routes.forEach(route => {
     allItems.push({ type: 'route', item: route, lineNumber: route.lineNumber || 0 });
   });
-  
+
   program.pipelines.forEach(pipeline => {
     allItems.push({ type: 'pipeline', item: pipeline, lineNumber: pipeline.lineNumber || 0 });
   });
-  
+
   program.variables.forEach(variable => {
     allItems.push({ type: 'variable', item: variable, lineNumber: variable.lineNumber || 0 });
   });
-  
+
   program.describes.forEach(describe => {
     allItems.push({ type: 'describe', item: describe, lineNumber: describe.lineNumber || 0 });
   });
-  
+
   program.comments.forEach(comment => {
     allItems.push({ type: 'comment', item: comment, lineNumber: comment.lineNumber || 0 });
   });
@@ -1066,6 +1200,18 @@ export function prettyPrint(program: Program): string {
         break;
       case 'config':
         lines.push(printConfig(entry.item));
+        lines.push('');
+        break;
+      case 'graphqlSchema':
+        lines.push(printGraphQLSchema(entry.item));
+        lines.push('');
+        break;
+      case 'query':
+        lines.push(printQueryResolver(entry.item));
+        lines.push('');
+        break;
+      case 'mutation':
+        lines.push(printMutationResolver(entry.item));
         lines.push('');
         break;
       case 'route':

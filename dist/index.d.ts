@@ -5,6 +5,9 @@ interface Program {
     routes: Route[];
     describes: Describe[];
     comments: Comment[];
+    graphqlSchema?: GraphQLSchema;
+    queries: QueryResolver[];
+    mutations: MutationResolver[];
 }
 interface Comment {
     type: 'standalone' | 'inline';
@@ -46,6 +49,23 @@ interface Variable {
     varType: string;
     name: string;
     value: string;
+    lineNumber?: number;
+    inlineComment?: Comment;
+}
+interface GraphQLSchema {
+    sdl: string;
+    lineNumber?: number;
+    inlineComment?: Comment;
+}
+interface QueryResolver {
+    name: string;
+    pipeline: Pipeline;
+    lineNumber?: number;
+    inlineComment?: Comment;
+}
+interface MutationResolver {
+    name: string;
+    pipeline: Pipeline;
     lineNumber?: number;
     inlineComment?: Comment;
 }
@@ -156,6 +176,9 @@ declare function printRoute(route: Route): string;
 declare function printConfig(config: Config): string;
 declare function printPipeline(pipeline: NamedPipeline): string;
 declare function printVariable(variable: Variable): string;
+declare function printGraphQLSchema(schema: GraphQLSchema): string;
+declare function printQueryResolver(query: QueryResolver): string;
+declare function printMutationResolver(mutation: MutationResolver): string;
 declare function printMock(mock: Mock, indent?: string): string;
 declare function printCondition(condition: Condition, indent?: string): string;
 declare function printTest(test: It): string;
@@ -170,4 +193,4 @@ declare function formatTag(tag: Tag): string;
 declare function formatPipelineRef(ref: PipelineRef): string[];
 declare function formatWhen(when: When): string;
 
-export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type It, type Mock, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type ResultBranch, type ResultBranchType, type Route, type Tag, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatTag, formatTags, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printMock, printPipeline, printRoute, printTest, printVariable };
+export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type GraphQLSchema, type It, type Mock, type MutationResolver, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type QueryResolver, type ResultBranch, type ResultBranchType, type Route, type Tag, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatTag, formatTags, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printGraphQLSchema, printMock, printMutationResolver, printPipeline, printQueryResolver, printRoute, printTest, printVariable };

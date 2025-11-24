@@ -36,8 +36,11 @@ __export(index_exports, {
   printCondition: () => printCondition,
   printConfig: () => printConfig,
   printDescribe: () => printDescribe,
+  printGraphQLSchema: () => printGraphQLSchema,
   printMock: () => printMock,
+  printMutationResolver: () => printMutationResolver,
   printPipeline: () => printPipeline,
+  printQueryResolver: () => printQueryResolver,
   printRoute: () => printRoute,
   printTest: () => printTest,
   printVariable: () => printVariable
@@ -137,6 +140,9 @@ var Parser = class {
     const routes = [];
     const describes = [];
     const comments = [];
+    let graphqlSchema;
+    const queries = [];
+    const mutations = [];
     while (!this.eof()) {
       this.skipWhitespaceOnly();
       if (this.eof()) break;
@@ -151,6 +157,24 @@ var Parser = class {
       if (cfg) {
         cfg.lineNumber = this.getLineNumber(start);
         configs.push(cfg);
+        continue;
+      }
+      const schema = this.tryParse(() => this.parseGraphQLSchema());
+      if (schema) {
+        schema.lineNumber = this.getLineNumber(start);
+        graphqlSchema = schema;
+        continue;
+      }
+      const query = this.tryParse(() => this.parseQueryResolver());
+      if (query) {
+        query.lineNumber = this.getLineNumber(start);
+        queries.push(query);
+        continue;
+      }
+      const mutation = this.tryParse(() => this.parseMutationResolver());
+      if (mutation) {
+        mutation.lineNumber = this.getLineNumber(start);
+        mutations.push(mutation);
         continue;
       }
       const namedPipe = this.tryParse(() => this.parseNamedPipeline());
@@ -192,7 +216,7 @@ var Parser = class {
       const start = Math.max(0, idx);
       this.report("Unclosed backtick-delimited string", start, start + 1, "warning");
     }
-    return { configs, pipelines, variables, routes, describes, comments };
+    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations };
   }
   eof() {
     return this.pos >= this.len;
@@ -538,6 +562,42 @@ var Parser = class {
     this.skipWhitespaceOnly();
     return { varType, name, value, inlineComment: inlineComment || void 0 };
   }
+  parseGraphQLSchema() {
+    this.expect("graphql");
+    this.skipInlineSpaces();
+    this.expect("schema");
+    this.skipInlineSpaces();
+    this.expect("=");
+    const inlineComment = this.parseInlineComment();
+    this.skipInlineSpaces();
+    const sdl = this.parseBacktickString();
+    this.skipWhitespaceOnly();
+    return { sdl, inlineComment: inlineComment || void 0 };
+  }
+  parseQueryResolver() {
+    this.expect("query");
+    this.skipInlineSpaces();
+    const name = this.parseIdentifier();
+    this.skipInlineSpaces();
+    this.expect("=");
+    const inlineComment = this.parseInlineComment();
+    this.skipWhitespaceOnly();
+    const pipeline = this.parsePipeline();
+    this.skipWhitespaceOnly();
+    return { name, pipeline, inlineComment: inlineComment || void 0 };
+  }
+  parseMutationResolver() {
+    this.expect("mutation");
+    this.skipInlineSpaces();
+    const name = this.parseIdentifier();
+    this.skipInlineSpaces();
+    this.expect("=");
+    const inlineComment = this.parseInlineComment();
+    this.skipWhitespaceOnly();
+    const pipeline = this.parsePipeline();
+    this.skipWhitespaceOnly();
+    return { name, pipeline, inlineComment: inlineComment || void 0 };
+  }
   parseRoute() {
     const method = this.parseMethod();
     this.skipInlineSpaces();
@@ -762,6 +822,39 @@ function printVariable(variable) {
   }
   return variableLine;
 }
+function printGraphQLSchema(schema) {
+  const schemaLine = `graphql schema = \`${schema.sdl}\``;
+  if (schema.inlineComment) {
+    return `${schemaLine} ${printComment(schema.inlineComment)}`;
+  }
+  return schemaLine;
+}
+function printQueryResolver(query) {
+  const lines = [];
+  const queryLine = `query ${query.name} =`;
+  if (query.inlineComment) {
+    lines.push(`${queryLine} ${printComment(query.inlineComment)}`);
+  } else {
+    lines.push(queryLine);
+  }
+  query.pipeline.steps.forEach((step) => {
+    lines.push(formatPipelineStep(step));
+  });
+  return lines.join("\n");
+}
+function printMutationResolver(mutation) {
+  const lines = [];
+  const mutationLine = `mutation ${mutation.name} =`;
+  if (mutation.inlineComment) {
+    lines.push(`${mutationLine} ${printComment(mutation.inlineComment)}`);
+  } else {
+    lines.push(mutationLine);
+  }
+  mutation.pipeline.steps.forEach((step) => {
+    lines.push(formatPipelineStep(step));
+  });
+  return lines.join("\n");
+}
 function printMock(mock, indent = "  ") {
   return `${indent}with mock ${mock.target} returning \`${mock.returnValue}\``;
 }
@@ -821,6 +914,15 @@ function prettyPrint(program) {
   program.configs.forEach((config) => {
     allItems.push({ type: "config", item: config, lineNumber: config.lineNumber || 0 });
   });
+  if (program.graphqlSchema) {
+    allItems.push({ type: "graphqlSchema", item: program.graphqlSchema, lineNumber: program.graphqlSchema.lineNumber || 0 });
+  }
+  program.queries.forEach((query) => {
+    allItems.push({ type: "query", item: query, lineNumber: query.lineNumber || 0 });
+  });
+  program.mutations.forEach((mutation) => {
+    allItems.push({ type: "mutation", item: mutation, lineNumber: mutation.lineNumber || 0 });
+  });
   program.routes.forEach((route) => {
     allItems.push({ type: "route", item: route, lineNumber: route.lineNumber || 0 });
   });
@@ -844,6 +946,18 @@ function prettyPrint(program) {
         break;
       case "config":
         lines.push(printConfig(entry.item));
+        lines.push("");
+        break;
+      case "graphqlSchema":
+        lines.push(printGraphQLSchema(entry.item));
+        lines.push("");
+        break;
+      case "query":
+        lines.push(printQueryResolver(entry.item));
+        lines.push("");
+        break;
+      case "mutation":
+        lines.push(printMutationResolver(entry.item));
         lines.push("");
         break;
       case "route":
@@ -953,8 +1067,11 @@ function formatWhen(when) {
   printCondition,
   printConfig,
   printDescribe,
+  printGraphQLSchema,
   printMock,
+  printMutationResolver,
   printPipeline,
+  printQueryResolver,
   printRoute,
   printTest,
   printVariable
