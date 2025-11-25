@@ -8,6 +8,7 @@ export interface Program {
   graphqlSchema?: GraphQLSchema;
   queries: QueryResolver[];
   mutations: MutationResolver[];
+  featureFlags?: Pipeline;
 }
 
 export interface Comment {
@@ -267,6 +268,7 @@ class Parser {
     let graphqlSchema: GraphQLSchema | undefined;
     const queries: QueryResolver[] = [];
     const mutations: MutationResolver[] = [];
+    let featureFlags: Pipeline | undefined;
 
     while (!this.eof()) {
       this.skipWhitespaceOnly();
@@ -307,6 +309,12 @@ class Parser {
       if (mutation) {
         mutation.lineNumber = this.getLineNumber(start);
         mutations.push(mutation);
+        continue;
+      }
+
+      const flags = this.tryParse(() => this.parseFeatureFlags());
+      if (flags) {
+        featureFlags = flags;
         continue;
       }
 
@@ -355,7 +363,7 @@ class Parser {
       this.report('Unclosed backtick-delimited string', start, start + 1, 'warning');
     }
 
-    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations };
+    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, featureFlags };
   }
 
   private eof(): boolean { return this.pos >= this.len; }
@@ -795,6 +803,16 @@ class Parser {
     const pipeline = this.parsePipeline();
     this.skipWhitespaceOnly();
     return { name, pipeline, inlineComment: inlineComment || undefined };
+  }
+
+  private parseFeatureFlags(): Pipeline {
+    this.expect('featureFlags');
+    this.skipInlineSpaces();
+    this.expect('=');
+    this.skipWhitespaceOnly();
+    const pipeline = this.parsePipeline();
+    this.skipWhitespaceOnly();
+    return pipeline;
   }
 
   private parseRoute(): Route {

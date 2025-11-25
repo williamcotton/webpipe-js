@@ -8,6 +8,7 @@ interface Program {
     graphqlSchema?: GraphQLSchema;
     queries: QueryResolver[];
     mutations: MutationResolver[];
+    featureFlags?: Pipeline;
 }
 interface Comment {
     type: 'standalone' | 'inline';
