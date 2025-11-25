@@ -767,9 +767,7 @@ class Parser {
   }
 
   private parseGraphQLSchema(): GraphQLSchema {
-    this.expect('graphql');
-    this.skipInlineSpaces();
-    this.expect('schema');
+    this.expect('graphqlSchema');
     this.skipInlineSpaces();
     this.expect('=');
     const inlineComment = this.parseInlineComment();
