@@ -96,7 +96,7 @@ export interface Tag {
 }
 
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; config: string; configType: ConfigType; tags: Tag[] }
+  | { kind: 'Regular'; name: string; config: string; configType: ConfigType; tags: Tag[]; parsedJoinTargets?: string[] }
   | { kind: 'Result'; branches: ResultBranch[] }
   | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline };
 
@@ -663,8 +663,43 @@ class Parser {
     // Parse tags (after config, before EOL)
     const tags = this.parseTags();
 
+    // Pre-parse join targets for join middleware (compile-time optimization)
+    const parsedJoinTargets = name === 'join' ? this.parseJoinTaskNames(config) : undefined;
+
     this.skipWhitespaceOnly();
-    return { kind: 'Regular', name, config, configType, tags };
+    return { kind: 'Regular', name, config, configType, tags, parsedJoinTargets };
+  }
+
+  /**
+   * Pre-parse join config into task names at parse time.
+   * This avoids repeated parsing in the hot path during execution.
+   */
+  private parseJoinTaskNames(config: string): string[] | undefined {
+    const trimmed = config.trim();
+
+    // Try parsing as JSON array first
+    if (trimmed.startsWith('[')) {
+      try {
+        const names = JSON.parse(trimmed);
+        if (Array.isArray(names) && names.every(n => typeof n === 'string')) {
+          return names;
+        }
+      } catch {
+        return undefined; // Invalid JSON, will error at runtime
+      }
+    }
+
+    // Otherwise parse as comma-separated list
+    const names = trimmed
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    if (names.length === 0) {
+      return undefined; // Will error at runtime
+    }
+
+    return names;
   }
 
   private parseResultStep(): PipelineStep {

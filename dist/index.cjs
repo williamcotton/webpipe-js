@@ -330,7 +330,7 @@ var Parser = class {
     return content;
   }
   parseMethod() {
-    const methods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+    const methods = ["GET", "POST", "PUT", "DELETE"];
     for (const m of methods) {
       if (this.text.startsWith(m, this.pos)) {
         this.pos += m.length;
@@ -470,8 +470,31 @@ var Parser = class {
     this.skipInlineSpaces();
     const { config, configType } = this.parseStepConfig();
     const tags = this.parseTags();
+    const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
-    return { kind: "Regular", name, config, configType, tags };
+    return { kind: "Regular", name, config, configType, tags, parsedJoinTargets };
+  }
+  /**
+   * Pre-parse join config into task names at parse time.
+   * This avoids repeated parsing in the hot path during execution.
+   */
+  parseJoinTaskNames(config) {
+    const trimmed = config.trim();
+    if (trimmed.startsWith("[")) {
+      try {
+        const names2 = JSON.parse(trimmed);
+        if (Array.isArray(names2) && names2.every((n) => typeof n === "string")) {
+          return names2;
+        }
+      } catch {
+        return void 0;
+      }
+    }
+    const names = trimmed.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+    if (names.length === 0) {
+      return void 0;
+    }
+    return names;
   }
   parseResultStep() {
     this.skipWhitespaceOnly();

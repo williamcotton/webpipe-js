@@ -99,6 +99,7 @@ type PipelineStep = {
     config: string;
     configType: ConfigType;
     tags: Tag[];
+    parsedJoinTargets?: string[];
 } | {
     kind: 'Result';
     branches: ResultBranch[];
