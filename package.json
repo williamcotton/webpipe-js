@@ -1,6 +1,6 @@
 {
   "name": "webpipe-js",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "Web Pipe parser",
   "license": "ISC",
   "author": "William Cotton",
@@ -15,7 +15,11 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsup",
