@@ -102,6 +102,11 @@ type PipelineStep = {
 } | {
     kind: 'Result';
     branches: ResultBranch[];
+} | {
+    kind: 'If';
+    condition: Pipeline;
+    thenBranch: Pipeline;
+    elseBranch?: Pipeline;
 };
 interface ResultBranch {
     branchType: ResultBranchType;

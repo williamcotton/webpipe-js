@@ -457,6 +457,8 @@ var Parser = class {
   parsePipelineStep() {
     const result = this.tryParse(() => this.parseResultStep());
     if (result) return result;
+    const ifStep = this.tryParse(() => this.parseIfStep());
+    if (ifStep) return ifStep;
     return this.parseRegularStep();
   }
   parseRegularStep() {
@@ -507,6 +509,43 @@ var Parser = class {
     this.skipSpaces();
     const pipeline = this.parsePipeline();
     return { branchType, statusCode, pipeline };
+  }
+  parseIfStep() {
+    this.skipWhitespaceOnly();
+    this.expect("|>");
+    this.skipInlineSpaces();
+    this.expect("if");
+    this.skipSpaces();
+    const condition = this.parseIfPipeline("then:");
+    this.skipSpaces();
+    this.expect("then:");
+    this.skipSpaces();
+    const thenBranch = this.parseIfPipeline("else:");
+    this.skipSpaces();
+    const elseBranch = this.tryParse(() => {
+      this.expect("else:");
+      this.skipSpaces();
+      return this.parsePipeline();
+    });
+    return { kind: "If", condition, thenBranch, elseBranch: elseBranch || void 0 };
+  }
+  parseIfPipeline(stopKeyword) {
+    const steps = [];
+    while (true) {
+      const save = this.pos;
+      this.skipWhitespaceOnly();
+      if (this.text.startsWith(stopKeyword, this.pos)) {
+        this.pos = save;
+        break;
+      }
+      if (!this.text.startsWith("|>", this.pos)) {
+        this.pos = save;
+        break;
+      }
+      const step = this.parsePipelineStep();
+      steps.push(step);
+    }
+    return { steps };
   }
   parsePipeline() {
     const steps = [];
@@ -1011,7 +1050,7 @@ function formatPipelineStep(step, indent = "  ") {
     const configPart = formatStepConfig(step.config, step.configType);
     const tagsPart = step.tags.length > 0 ? " " + formatTags(step.tags) : "";
     return `${indent}|> ${step.name}: ${configPart}${tagsPart}`;
-  } else {
+  } else if (step.kind === "Result") {
     const lines = [`${indent}|> result`];
     step.branches.forEach((branch) => {
       const branchName = branch.branchType.kind === "Ok" ? "ok" : branch.branchType.kind === "Default" ? "default" : branch.branchType.name;
@@ -1020,6 +1059,22 @@ function formatPipelineStep(step, indent = "  ") {
         lines.push(formatPipelineStep(branchStep, indent + "    "));
       });
     });
+    return lines.join("\n");
+  } else {
+    const lines = [`${indent}|> if`];
+    step.condition.steps.forEach((condStep) => {
+      lines.push(formatPipelineStep(condStep, indent + "  "));
+    });
+    lines.push(`${indent}  then:`);
+    step.thenBranch.steps.forEach((thenStep) => {
+      lines.push(formatPipelineStep(thenStep, indent + "    "));
+    });
+    if (step.elseBranch) {
+      lines.push(`${indent}  else:`);
+      step.elseBranch.steps.forEach((elseStep) => {
+        lines.push(formatPipelineStep(elseStep, indent + "    "));
+      });
+    }
     return lines.join("\n");
   }
 }

@@ -718,8 +718,8 @@ class Parser {
     this.expect('then:');
     this.skipSpaces();
 
-    // Parse then branch (stops when it sees 'else:' or non-pipeline content)
-    const thenBranch = this.parseIfPipeline('else:');
+    // Parse then branch (stops when it sees 'else:' or 'end' or non-pipeline content)
+    const thenBranch = this.parseIfPipeline('else:', 'end');
 
     this.skipSpaces();
 
@@ -727,22 +727,32 @@ class Parser {
     const elseBranch = this.tryParse(() => {
       this.expect('else:');
       this.skipSpaces();
-      return this.parsePipeline();
+      return this.parseIfPipeline('end');
+    });
+
+    this.skipSpaces();
+
+    // Check for optional 'end' keyword
+    this.tryParse(() => {
+      this.expect('end');
+      return true;
     });
 
     return { kind: 'If', condition, thenBranch, elseBranch: elseBranch || undefined };
   }
 
-  private parseIfPipeline(stopKeyword: string): Pipeline {
+  private parseIfPipeline(...stopKeywords: string[]): Pipeline {
     const steps: PipelineStep[] = [];
     while (true) {
       const save = this.pos;
       this.skipWhitespaceOnly();
 
-      // Check if we've hit the stop keyword
-      if (this.text.startsWith(stopKeyword, this.pos)) {
-        this.pos = save;
-        break;
+      // Check if we've hit any of the stop keywords
+      for (const keyword of stopKeywords) {
+        if (this.text.startsWith(keyword, this.pos)) {
+          this.pos = save;
+          return { steps };
+        }
       }
 
       // Check if this is a pipeline step
