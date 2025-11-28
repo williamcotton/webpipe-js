@@ -356,4 +356,113 @@ describe('parseProgram - tags support', () => {
   });
 });
 
+describe('parseProgram - comments inside pipelines', () => {
+  it('parses comments between pipeline steps', () => {
+    const src = `GET /test
+  # comment before first step
+  |> jq: \`{ hello: "world" }\`
+  # comment between steps
+  |> handlebars: \`<p>{{hello}}</p>\`
+  # comment after last step
+`;
+    const program = parseProgram(src);
+    expect(program.routes.length).toBe(1);
+    
+    const route = program.routes[0];
+    expect(route.pipeline.kind).toBe('Inline');
+    if (route.pipeline.kind === 'Inline') {
+      // Should parse both steps despite comments
+      expect(route.pipeline.pipeline.steps.length).toBe(2);
+      
+      const first = route.pipeline.pipeline.steps[0];
+      const second = route.pipeline.pipeline.steps[1];
+      expect(first.kind).toBe('Regular');
+      expect(second.kind).toBe('Regular');
+      if (first.kind === 'Regular') {
+        expect(first.name).toBe('jq');
+      }
+      if (second.kind === 'Regular') {
+        expect(second.name).toBe('handlebars');
+      }
+    }
+  });
+
+  it('parses comments inside if blocks', () => {
+    const src = `GET /test-if
+  |> jq: \`{ level: 10 }\`
+  # comment before if
+  |> if
+    |> jq: \`.level > 5\`
+    # comment before then
+    then:
+      # comment inside then
+      |> jq: \`. + { status: "high" }\`
+    # comment before else
+    else:
+      # comment inside else
+      |> jq: \`. + { status: "low" }\`
+`;
+    const program = parseProgram(src);
+    expect(program.routes.length).toBe(1);
+    
+    const route = program.routes[0];
+    expect(route.pipeline.kind).toBe('Inline');
+    if (route.pipeline.kind === 'Inline') {
+      expect(route.pipeline.pipeline.steps.length).toBe(2); // jq + if
+      
+      const ifStep = route.pipeline.pipeline.steps[1];
+      expect(ifStep.kind).toBe('If');
+      if (ifStep.kind === 'If') {
+        expect(ifStep.condition.steps.length).toBe(1);
+        expect(ifStep.thenBranch.steps.length).toBe(1);
+        expect(ifStep.elseBranch).toBeDefined();
+        expect(ifStep.elseBranch!.steps.length).toBe(1);
+      }
+    }
+  });
+
+  it('parses comments inside result branches', () => {
+    const src = `GET /test
+  |> jq: \`{}\`
+  |> result
+    # comment before ok
+    ok(200):
+      # comment in ok branch
+      |> jq: \`{ok: true}\`
+    # comment before default
+    default(500):
+      |> jq: \`{ok: false}\`
+`;
+    const program = parseProgram(src);
+    expect(program.routes.length).toBe(1);
+    
+    const route = program.routes[0];
+    expect(route.pipeline.kind).toBe('Inline');
+    if (route.pipeline.kind === 'Inline') {
+      const resultStep = route.pipeline.pipeline.steps[1];
+      expect(resultStep.kind).toBe('Result');
+      if (resultStep.kind === 'Result') {
+        expect(resultStep.branches.length).toBe(2);
+        expect(resultStep.branches[0].statusCode).toBe(200);
+        expect(resultStep.branches[1].statusCode).toBe(500);
+      }
+    }
+  });
+
+  it('parses // style comments in pipelines', () => {
+    const src = `GET /test
+  // C-style comment before step
+  |> jq: \`{ x: 1 }\`
+  // Another comment
+  |> jq: \`{ y: 2 }\`
+`;
+    const program = parseProgram(src);
+    expect(program.routes.length).toBe(1);
+    
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      expect(route.pipeline.pipeline.steps.length).toBe(2);
+    }
+  });
+});
 

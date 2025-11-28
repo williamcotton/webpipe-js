@@ -520,23 +520,30 @@ var Parser = class {
     this.skipSpaces();
     this.expect("then:");
     this.skipSpaces();
-    const thenBranch = this.parseIfPipeline("else:");
+    const thenBranch = this.parseIfPipeline("else:", "end");
     this.skipSpaces();
     const elseBranch = this.tryParse(() => {
       this.expect("else:");
       this.skipSpaces();
-      return this.parsePipeline();
+      return this.parseIfPipeline("end");
+    });
+    this.skipSpaces();
+    this.tryParse(() => {
+      this.expect("end");
+      return true;
     });
     return { kind: "If", condition, thenBranch, elseBranch: elseBranch || void 0 };
   }
-  parseIfPipeline(stopKeyword) {
+  parseIfPipeline(...stopKeywords) {
     const steps = [];
     while (true) {
       const save = this.pos;
-      this.skipWhitespaceOnly();
-      if (this.text.startsWith(stopKeyword, this.pos)) {
-        this.pos = save;
-        break;
+      this.skipSpaces();
+      for (const keyword of stopKeywords) {
+        if (this.text.startsWith(keyword, this.pos)) {
+          this.pos = save;
+          return { steps };
+        }
       }
       if (!this.text.startsWith("|>", this.pos)) {
         this.pos = save;
@@ -551,7 +558,7 @@ var Parser = class {
     const steps = [];
     while (true) {
       const save = this.pos;
-      this.skipWhitespaceOnly();
+      this.skipSpaces();
       if (!this.text.startsWith("|>", this.pos)) {
         this.pos = save;
         break;

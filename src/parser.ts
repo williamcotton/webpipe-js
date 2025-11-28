@@ -745,7 +745,7 @@ class Parser {
     const steps: PipelineStep[] = [];
     while (true) {
       const save = this.pos;
-      this.skipWhitespaceOnly();
+      this.skipSpaces(); // Skip whitespace AND comments
 
       // Check if we've hit any of the stop keywords
       for (const keyword of stopKeywords) {
@@ -771,7 +771,7 @@ class Parser {
     const steps: PipelineStep[] = [];
     while (true) {
       const save = this.pos;
-      this.skipWhitespaceOnly();
+      this.skipSpaces(); // Skip whitespace AND comments
       if (!this.text.startsWith('|>', this.pos)) {
         this.pos = save;
         break;
