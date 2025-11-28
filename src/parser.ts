@@ -480,7 +480,7 @@ class Parser {
   }
 
   private parseMethod(): string {
-    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+    const methods = ['GET', 'POST', 'PUT', 'DELETE'];
     for (const m of methods) {
       if (this.text.startsWith(m, this.pos)) {
         this.pos += m.length;
