@@ -98,7 +98,13 @@ export interface Tag {
 export type PipelineStep =
   | { kind: 'Regular'; name: string; config: string; configType: ConfigType; tags: Tag[]; parsedJoinTargets?: string[] }
   | { kind: 'Result'; branches: ResultBranch[] }
-  | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline };
+  | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline }
+  | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline };
+
+export interface DispatchBranch {
+  tag: Tag;
+  pipeline: Pipeline;
+}
 
 export interface ResultBranch {
   branchType: ResultBranchType;
@@ -648,6 +654,8 @@ class Parser {
     if (result) return result;
     const ifStep = this.tryParse(() => this.parseIfStep());
     if (ifStep) return ifStep;
+    const dispatchStep = this.tryParse(() => this.parseDispatchStep());
+    if (dispatchStep) return dispatchStep;
     return this.parseRegularStep();
   }
 
@@ -774,6 +782,52 @@ class Parser {
     });
 
     return { kind: 'If', condition, thenBranch, elseBranch: elseBranch || undefined };
+  }
+
+  private parseDispatchStep(): PipelineStep {
+    this.skipWhitespaceOnly();
+    this.expect('|>');
+    this.skipInlineSpaces();
+    this.expect('dispatch');
+    this.skipSpaces();
+
+    // Parse case branches
+    const branches: DispatchBranch[] = [];
+    while (true) {
+      const branch = this.tryParse(() => this.parseDispatchBranch());
+      if (!branch) break;
+      branches.push(branch);
+      this.skipSpaces();
+    }
+
+    // Parse optional default branch
+    const defaultBranch = this.tryParse(() => {
+      this.expect('default:');
+      this.skipSpaces();
+      return this.parseIfPipeline('end');
+    });
+
+    this.skipSpaces();
+
+    // Check for optional 'end' keyword
+    this.tryParse(() => {
+      this.expect('end');
+      return true;
+    });
+
+    return { kind: 'Dispatch', branches, default: defaultBranch || undefined };
+  }
+
+  private parseDispatchBranch(): DispatchBranch {
+    this.skipSpaces();
+    this.expect('case');
+    this.skipInlineSpaces();
+    const tag = this.parseTag();
+    this.expect(':');
+    this.skipSpaces();
+    // Parse pipeline (stops when it sees 'case', 'default', 'end', or non-pipeline content)
+    const pipeline = this.parseIfPipeline('case', 'default:', 'end');
+    return { tag, pipeline };
   }
 
   private parseIfPipeline(...stopKeywords: string[]): Pipeline {
@@ -1385,8 +1439,7 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  '): s
       });
     });
     return lines.join('\n');
-  } else {
-    // If step
+  } else if (step.kind === 'If') {
     const lines: string[] = [`${indent}|> if`];
     // Format condition pipeline
     step.condition.steps.forEach(condStep => {
@@ -1402,6 +1455,24 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  '): s
       lines.push(`${indent}  else:`);
       step.elseBranch.steps.forEach(elseStep => {
         lines.push(formatPipelineStep(elseStep, indent + '    '));
+      });
+    }
+    return lines.join('\n');
+  } else {
+    // Dispatch step
+    const lines: string[] = [`${indent}|> dispatch`];
+    // Format case branches
+    step.branches.forEach(branch => {
+      lines.push(`${indent}  case ${formatTag(branch.tag)}:`);
+      branch.pipeline.steps.forEach(branchStep => {
+        lines.push(formatPipelineStep(branchStep, indent + '    '));
+      });
+    });
+    // Format default branch if present
+    if (step.default) {
+      lines.push(`${indent}  default:`);
+      step.default.steps.forEach(defaultStep => {
+        lines.push(formatPipelineStep(defaultStep, indent + '    '));
       });
     }
     return lines.join('\n');

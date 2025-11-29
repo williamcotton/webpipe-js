@@ -458,11 +458,257 @@ describe('parseProgram - comments inside pipelines', () => {
 `;
     const program = parseProgram(src);
     expect(program.routes.length).toBe(1);
-    
+
     const route = program.routes[0];
     if (route.pipeline.kind === 'Inline') {
       expect(route.pipeline.pipeline.steps.length).toBe(2);
     }
+  });
+});
+
+describe('parseProgram - dispatch step', () => {
+  it('parses basic dispatch with case and default', () => {
+    const src = `GET /test
+  |> dispatch
+    case @flag(experimental):
+      |> jq: \`{ version: "experimental" }\`
+    case @env(dev):
+      |> jq: \`{ version: "dev" }\`
+    default:
+      |> jq: \`{ version: "stable" }\`
+`;
+    const program = parseProgram(src);
+    expect(program.routes.length).toBe(1);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const steps = route.pipeline.pipeline.steps;
+      expect(steps.length).toBe(1);
+
+      const dispatchStep = steps[0];
+      expect(dispatchStep.kind).toBe('Dispatch');
+
+      if (dispatchStep.kind === 'Dispatch') {
+        expect(dispatchStep.branches.length).toBe(2);
+
+        // Check first case
+        expect(dispatchStep.branches[0].tag.name).toBe('flag');
+        expect(dispatchStep.branches[0].tag.args).toEqual(['experimental']);
+        expect(dispatchStep.branches[0].tag.negated).toBe(false);
+        expect(dispatchStep.branches[0].pipeline.steps.length).toBe(1);
+
+        // Check second case
+        expect(dispatchStep.branches[1].tag.name).toBe('env');
+        expect(dispatchStep.branches[1].tag.args).toEqual(['dev']);
+
+        // Check default
+        expect(dispatchStep.default).toBeDefined();
+        expect(dispatchStep.default!.steps.length).toBe(1);
+      }
+    }
+  });
+
+  it('parses dispatch without default branch', () => {
+    const src = `GET /test
+  |> dispatch
+    case @flag(beta):
+      |> jq: \`{ beta: true }\`
+    case @flag(alpha):
+      |> jq: \`{ alpha: true }\`
+`;
+    const program = parseProgram(src);
+    const route = program.routes[0];
+
+    if (route.pipeline.kind === 'Inline') {
+      const dispatchStep = route.pipeline.pipeline.steps[0];
+
+      if (dispatchStep.kind === 'Dispatch') {
+        expect(dispatchStep.branches.length).toBe(2);
+        expect(dispatchStep.default).toBeUndefined();
+      }
+    }
+  });
+
+  it('parses dispatch with negated tag', () => {
+    const src = `GET /test
+  |> dispatch
+    case @!env(production):
+      |> jq: \`{ nonprod: true }\`
+    default:
+      |> jq: \`{ prod: true }\`
+`;
+    const program = parseProgram(src);
+    const route = program.routes[0];
+
+    if (route.pipeline.kind === 'Inline') {
+      const dispatchStep = route.pipeline.pipeline.steps[0];
+
+      if (dispatchStep.kind === 'Dispatch') {
+        expect(dispatchStep.branches[0].tag.name).toBe('env');
+        expect(dispatchStep.branches[0].tag.negated).toBe(true);
+        expect(dispatchStep.branches[0].tag.args).toEqual(['production']);
+      }
+    }
+  });
+
+  it('parses dispatch with multi-step pipelines in branches', () => {
+    const src = `GET /test
+  |> dispatch
+    case @flag(experimental):
+      |> jq: \`{ step: 1 }\`
+      |> jq: \`{ step: 2 }\`
+      |> jq: \`{ step: 3 }\`
+    default:
+      |> jq: \`{ step: 1 }\`
+`;
+    const program = parseProgram(src);
+    const route = program.routes[0];
+
+    if (route.pipeline.kind === 'Inline') {
+      const dispatchStep = route.pipeline.pipeline.steps[0];
+
+      if (dispatchStep.kind === 'Dispatch') {
+        expect(dispatchStep.branches[0].pipeline.steps.length).toBe(3);
+        expect(dispatchStep.default!.steps.length).toBe(1);
+      }
+    }
+  });
+
+  it('parses dispatch with end keyword and continuation', () => {
+    const src = `GET /test
+  |> dispatch
+    case @env(prod):
+      |> jq: \`{ env: "prod" }\`
+    default:
+      |> jq: \`{ env: "other" }\`
+  end
+  |> jq: \`{ final: true }\`
+`;
+    const program = parseProgram(src);
+    const route = program.routes[0];
+
+    if (route.pipeline.kind === 'Inline') {
+      const steps = route.pipeline.pipeline.steps;
+      expect(steps.length).toBe(2);
+      expect(steps[0].kind).toBe('Dispatch');
+      expect(steps[1].kind).toBe('Regular');
+    }
+  });
+
+  it('parses dispatch with comments', () => {
+    const src = `GET /test
+  # Comment before dispatch
+  |> dispatch
+    # Comment before case
+    case @flag(experimental):
+      # Comment inside branch
+      |> jq: \`{ version: "experimental" }\`
+    # Comment between cases
+    case @env(dev):
+      |> jq: \`{ version: "dev" }\`
+    # Comment before default
+    default:
+      |> jq: \`{ version: "stable" }\`
+`;
+    const program = parseProgram(src);
+    const route = program.routes[0];
+
+    if (route.pipeline.kind === 'Inline') {
+      const dispatchStep = route.pipeline.pipeline.steps[0];
+      expect(dispatchStep.kind).toBe('Dispatch');
+
+      if (dispatchStep.kind === 'Dispatch') {
+        expect(dispatchStep.branches.length).toBe(2);
+        expect(dispatchStep.default).toBeDefined();
+      }
+    }
+  });
+
+  it('parses one-liner dispatch syntax', () => {
+    const src = `GET /test
+  |> dispatch case @flag(a): |> jq: \`{a: 1}\` case @flag(b): |> jq: \`{b: 2}\` default: |> jq: \`{c: 3}\` end
+`;
+    const program = parseProgram(src);
+    const route = program.routes[0];
+
+    if (route.pipeline.kind === 'Inline') {
+      const dispatchStep = route.pipeline.pipeline.steps[0];
+
+      if (dispatchStep.kind === 'Dispatch') {
+        expect(dispatchStep.branches.length).toBe(2);
+        expect(dispatchStep.branches[0].tag.name).toBe('flag');
+        expect(dispatchStep.branches[0].tag.args).toEqual(['a']);
+        expect(dispatchStep.branches[1].tag.args).toEqual(['b']);
+        expect(dispatchStep.default).toBeDefined();
+      }
+    }
+  });
+
+  it('parses nested dispatch', () => {
+    const src = `GET /test
+  |> dispatch
+    case @env(production):
+      |> dispatch
+        case @flag(premium):
+          |> jq: \`{ tier: "prod-premium" }\`
+        default:
+          |> jq: \`{ tier: "prod-standard" }\`
+    default:
+      |> jq: \`{ tier: "other" }\`
+`;
+    const program = parseProgram(src);
+    const route = program.routes[0];
+
+    if (route.pipeline.kind === 'Inline') {
+      const outerDispatch = route.pipeline.pipeline.steps[0];
+
+      if (outerDispatch.kind === 'Dispatch') {
+        const firstBranchSteps = outerDispatch.branches[0].pipeline.steps;
+        expect(firstBranchSteps.length).toBe(1);
+        expect(firstBranchSteps[0].kind).toBe('Dispatch');
+
+        if (firstBranchSteps[0].kind === 'Dispatch') {
+          expect(firstBranchSteps[0].branches.length).toBe(1);
+          expect(firstBranchSteps[0].branches[0].tag.name).toBe('flag');
+        }
+      }
+    }
+  });
+
+  it('roundtrip: parse -> format -> parse preserves dispatch', () => {
+    const src = `GET /test
+  |> dispatch
+    case @flag(experimental):
+      |> jq: \`{ version: "experimental" }\`
+    case @env(dev):
+      |> jq: \`{ version: "dev" }\`
+    default:
+      |> jq: \`{ version: "stable" }\`
+`;
+    const program1 = parseProgram(src);
+    const formatted = prettyPrint(program1);
+    const program2 = parseProgram(formatted);
+
+    const steps1 = (program1.routes[0].pipeline as any).pipeline.steps;
+    const steps2 = (program2.routes[0].pipeline as any).pipeline.steps;
+
+    expect(steps1).toEqual(steps2);
+  });
+
+  it('formats dispatch correctly', () => {
+    const src = `GET /test
+  |> dispatch
+    case @flag(experimental):
+      |> jq: \`{ version: "experimental" }\`
+    default:
+      |> jq: \`{ version: "stable" }\`
+`;
+    const program = parseProgram(src);
+    const formatted = prettyPrint(program);
+
+    expect(formatted).toContain('|> dispatch');
+    expect(formatted).toContain('case @flag(experimental):');
+    expect(formatted).toContain('default:');
   });
 });
 

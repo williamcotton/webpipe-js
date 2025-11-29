@@ -108,7 +108,15 @@ type PipelineStep = {
     condition: Pipeline;
     thenBranch: Pipeline;
     elseBranch?: Pipeline;
+} | {
+    kind: 'Dispatch';
+    branches: DispatchBranch[];
+    default?: Pipeline;
 };
+interface DispatchBranch {
+    tag: Tag;
+    pipeline: Pipeline;
+}
 interface ResultBranch {
     branchType: ResultBranchType;
     statusCode: number;
@@ -200,4 +208,4 @@ declare function formatTag(tag: Tag): string;
 declare function formatPipelineRef(ref: PipelineRef): string[];
 declare function formatWhen(when: When): string;
 
-export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type GraphQLSchema, type It, type Mock, type MutationResolver, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type QueryResolver, type ResultBranch, type ResultBranchType, type Route, type Tag, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatTag, formatTags, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printGraphQLSchema, printMock, printMutationResolver, printPipeline, printQueryResolver, printRoute, printTest, printVariable };
+export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type DispatchBranch, type GraphQLSchema, type It, type Mock, type MutationResolver, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type QueryResolver, type ResultBranch, type ResultBranchType, type Route, type Tag, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatTag, formatTags, formatWhen, getPipelineRanges, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printGraphQLSchema, printMock, printMutationResolver, printPipeline, printQueryResolver, printRoute, printTest, printVariable };

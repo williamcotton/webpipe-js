@@ -410,6 +410,8 @@ var Parser = class {
     if (result) return result;
     const ifStep = this.tryParse(() => this.parseIfStep());
     if (ifStep) return ifStep;
+    const dispatchStep = this.tryParse(() => this.parseDispatchStep());
+    if (dispatchStep) return dispatchStep;
     return this.parseRegularStep();
   }
   parseRegularStep() {
@@ -507,6 +509,41 @@ var Parser = class {
       return true;
     });
     return { kind: "If", condition, thenBranch, elseBranch: elseBranch || void 0 };
+  }
+  parseDispatchStep() {
+    this.skipWhitespaceOnly();
+    this.expect("|>");
+    this.skipInlineSpaces();
+    this.expect("dispatch");
+    this.skipSpaces();
+    const branches = [];
+    while (true) {
+      const branch = this.tryParse(() => this.parseDispatchBranch());
+      if (!branch) break;
+      branches.push(branch);
+      this.skipSpaces();
+    }
+    const defaultBranch = this.tryParse(() => {
+      this.expect("default:");
+      this.skipSpaces();
+      return this.parseIfPipeline("end");
+    });
+    this.skipSpaces();
+    this.tryParse(() => {
+      this.expect("end");
+      return true;
+    });
+    return { kind: "Dispatch", branches, default: defaultBranch || void 0 };
+  }
+  parseDispatchBranch() {
+    this.skipSpaces();
+    this.expect("case");
+    this.skipInlineSpaces();
+    const tag = this.parseTag();
+    this.expect(":");
+    this.skipSpaces();
+    const pipeline = this.parseIfPipeline("case", "default:", "end");
+    return { tag, pipeline };
   }
   parseIfPipeline(...stopKeywords) {
     const steps = [];
@@ -1041,7 +1078,7 @@ function formatPipelineStep(step, indent = "  ") {
       });
     });
     return lines.join("\n");
-  } else {
+  } else if (step.kind === "If") {
     const lines = [`${indent}|> if`];
     step.condition.steps.forEach((condStep) => {
       lines.push(formatPipelineStep(condStep, indent + "  "));
@@ -1054,6 +1091,21 @@ function formatPipelineStep(step, indent = "  ") {
       lines.push(`${indent}  else:`);
       step.elseBranch.steps.forEach((elseStep) => {
         lines.push(formatPipelineStep(elseStep, indent + "    "));
+      });
+    }
+    return lines.join("\n");
+  } else {
+    const lines = [`${indent}|> dispatch`];
+    step.branches.forEach((branch) => {
+      lines.push(`${indent}  case ${formatTag(branch.tag)}:`);
+      branch.pipeline.steps.forEach((branchStep) => {
+        lines.push(formatPipelineStep(branchStep, indent + "    "));
+      });
+    });
+    if (step.default) {
+      lines.push(`${indent}  default:`);
+      step.default.steps.forEach((defaultStep) => {
+        lines.push(formatPipelineStep(defaultStep, indent + "    "));
       });
     }
     return lines.join("\n");
