@@ -112,6 +112,10 @@ type PipelineStep = {
     kind: 'Dispatch';
     branches: DispatchBranch[];
     default?: Pipeline;
+} | {
+    kind: 'Foreach';
+    selector: string;
+    pipeline: Pipeline;
 };
 interface DispatchBranch {
     tag: Tag;

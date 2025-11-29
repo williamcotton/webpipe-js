@@ -461,7 +461,28 @@ var Parser = class {
     if (ifStep) return ifStep;
     const dispatchStep = this.tryParse(() => this.parseDispatchStep());
     if (dispatchStep) return dispatchStep;
+    const foreachStep = this.tryParse(() => this.parseForeachStep());
+    if (foreachStep) return foreachStep;
     return this.parseRegularStep();
+  }
+  parseForeachStep() {
+    this.skipWhitespaceOnly();
+    this.expect("|>");
+    this.skipInlineSpaces();
+    this.expect("foreach");
+    if (this.cur() !== " " && this.cur() !== "	") {
+      throw new ParseFailure("space after foreach", this.pos);
+    }
+    this.skipInlineSpaces();
+    const selector = this.consumeWhile((c) => c !== "\n" && c !== "#").trim();
+    if (selector.length === 0) {
+      throw new ParseFailure("foreach selector", this.pos);
+    }
+    this.skipSpaces();
+    const pipeline = this.parseIfPipeline("end");
+    this.skipSpaces();
+    this.expect("end");
+    return { kind: "Foreach", selector, pipeline };
   }
   parseRegularStep() {
     this.skipWhitespaceOnly();
@@ -1143,7 +1164,7 @@ function formatPipelineStep(step, indent = "  ") {
       });
     }
     return lines.join("\n");
-  } else {
+  } else if (step.kind === "Dispatch") {
     const lines = [`${indent}|> dispatch`];
     step.branches.forEach((branch) => {
       lines.push(`${indent}  case ${formatTag(branch.tag)}:`);
@@ -1157,6 +1178,13 @@ function formatPipelineStep(step, indent = "  ") {
         lines.push(formatPipelineStep(defaultStep, indent + "    "));
       });
     }
+    return lines.join("\n");
+  } else {
+    const lines = [`${indent}|> foreach ${step.selector}`];
+    step.pipeline.steps.forEach((innerStep) => {
+      lines.push(formatPipelineStep(innerStep, indent + "  "));
+    });
+    lines.push(`${indent}end`);
     return lines.join("\n");
   }
 }

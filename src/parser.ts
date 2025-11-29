@@ -99,7 +99,8 @@ export type PipelineStep =
   | { kind: 'Regular'; name: string; config: string; configType: ConfigType; tags: Tag[]; parsedJoinTargets?: string[] }
   | { kind: 'Result'; branches: ResultBranch[] }
   | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline }
-  | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline };
+  | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline }
+  | { kind: 'Foreach'; selector: string; pipeline: Pipeline };
 
 export interface DispatchBranch {
   tag: Tag;
@@ -656,7 +657,38 @@ class Parser {
     if (ifStep) return ifStep;
     const dispatchStep = this.tryParse(() => this.parseDispatchStep());
     if (dispatchStep) return dispatchStep;
+    const foreachStep = this.tryParse(() => this.parseForeachStep());
+    if (foreachStep) return foreachStep;
     return this.parseRegularStep();
+  }
+
+  private parseForeachStep(): PipelineStep {
+    this.skipWhitespaceOnly();
+    this.expect('|>');
+    this.skipInlineSpaces();
+    this.expect('foreach');
+    
+    // Must have at least one space after 'foreach'
+    if (this.cur() !== ' ' && this.cur() !== '\t') {
+      throw new ParseFailure('space after foreach', this.pos);
+    }
+    this.skipInlineSpaces();
+
+    // Parse selector: consume until newline or comment
+    const selector = this.consumeWhile((c) => c !== '\n' && c !== '#').trim();
+    if (selector.length === 0) {
+      throw new ParseFailure('foreach selector', this.pos);
+    }
+    this.skipSpaces();
+
+    // Parse inner pipeline (stops when it sees 'end')
+    const pipeline = this.parseIfPipeline('end');
+    this.skipSpaces();
+
+    // Expect 'end' keyword
+    this.expect('end');
+
+    return { kind: 'Foreach', selector, pipeline };
   }
 
   private parseRegularStep(): PipelineStep {
@@ -1458,7 +1490,7 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  '): s
       });
     }
     return lines.join('\n');
-  } else {
+  } else if (step.kind === 'Dispatch') {
     // Dispatch step
     const lines: string[] = [`${indent}|> dispatch`];
     // Format case branches
@@ -1475,6 +1507,15 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  '): s
         lines.push(formatPipelineStep(defaultStep, indent + '    '));
       });
     }
+    return lines.join('\n');
+  } else {
+    // Foreach step
+    const lines: string[] = [`${indent}|> foreach ${step.selector}`];
+    // Format inner pipeline
+    step.pipeline.steps.forEach(innerStep => {
+      lines.push(formatPipelineStep(innerStep, indent + '  '));
+    });
+    lines.push(`${indent}end`);
     return lines.join('\n');
   }
 }
