@@ -102,7 +102,7 @@ export type TagExpr =
   | { kind: 'Or'; left: TagExpr; right: TagExpr };
 
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; config: string; configType: ConfigType; tags: Tag[]; parsedJoinTargets?: string[] }
+  | { kind: 'Regular'; name: string; config: string; configType: ConfigType; condition?: TagExpr; parsedJoinTargets?: string[] }
   | { kind: 'Result'; branches: ResultBranch[] }
   | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline }
   | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline }
@@ -706,14 +706,59 @@ class Parser {
     this.skipInlineSpaces();
     const { config, configType } = this.parseStepConfig();
 
-    // Parse tags (after config, before EOL)
-    const tags = this.parseTags();
+    // Parse optional condition (tag expression)
+    const condition = this.parseStepCondition();
 
     // Pre-parse join targets for join middleware (compile-time optimization)
     const parsedJoinTargets = name === 'join' ? this.parseJoinTaskNames(config) : undefined;
 
     this.skipWhitespaceOnly();
-    return { kind: 'Regular', name, config, configType, tags, parsedJoinTargets };
+    return { kind: 'Regular', name, config, configType, condition, parsedJoinTargets };
+  }
+
+  /**
+   * Parse optional step condition (tag expression after the config)
+   * Supports:
+   *   - @tag (single tag)
+   *   - @tag @tag2 (implicit AND for backwards compatibility)
+   *   - @tag and @tag2 (explicit AND)
+   *   - @tag or @tag2 (explicit OR)
+   *   - (@tag or @tag2) and @tag3 (grouping)
+   */
+  private parseStepCondition(): TagExpr | undefined {
+    this.skipInlineSpaces();
+    
+    // Check if there's a tag expression starting (@ for tags, ( for grouped expressions)
+    const ch = this.cur();
+    if (ch !== '@' && ch !== '(') {
+      return undefined;
+    }
+    
+    // Parse the first tag expression (which may include and/or)
+    let expr = this.parseTagExpr();
+    
+    // Check for additional space-separated tags (implicit AND for backwards compatibility)
+    // This handles: @dev @flag(x) which was valid in the old Vec<Tag> format
+    while (true) {
+      this.skipInlineSpaces();
+      
+      // Check for EOL or comment
+      const ch = this.cur();
+      if (ch === '\n' || ch === '\r' || ch === '#' || this.text.startsWith('//', this.pos)) {
+        break;
+      }
+      
+      // Check if there's another tag starting (without and/or keyword)
+      if (ch !== '@') {
+        break;
+      }
+      
+      // Parse the next tag (just a single tag, not a full expression)
+      const nextTag = this.parseTag();
+      expr = { kind: 'And', left: expr, right: { kind: 'Tag', tag: nextTag } };
+    }
+    
+    return expr;
   }
 
   /**
@@ -1532,8 +1577,8 @@ export function formatConfigValue(value: ConfigValue): string {
 export function formatPipelineStep(step: PipelineStep, indent: string = '  '): string {
   if (step.kind === 'Regular') {
     const configPart = formatStepConfig(step.config, step.configType);
-    const tagsPart = step.tags.length > 0 ? ' ' + formatTags(step.tags) : '';
-    return `${indent}|> ${step.name}: ${configPart}${tagsPart}`;
+    const conditionPart = step.condition ? ' ' + formatTagExpr(step.condition) : '';
+    return `${indent}|> ${step.name}: ${configPart}${conditionPart}`;
   } else if (step.kind === 'Result') {
     const lines: string[] = [`${indent}|> result`];
     step.branches.forEach(branch => {

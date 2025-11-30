@@ -142,14 +142,17 @@ describe('parseProgram - tags support', () => {
 
     expect(step.kind).toBe('Regular');
     if (step.kind === 'Regular') {
-      expect(step.tags.length).toBe(1);
-      expect(step.tags[0].name).toBe('prod');
-      expect(step.tags[0].negated).toBe(false);
-      expect(step.tags[0].args.length).toBe(0);
+      expect(step.condition).toBeDefined();
+      expect(step.condition?.kind).toBe('Tag');
+      if (step.condition?.kind === 'Tag') {
+        expect(step.condition.tag.name).toBe('prod');
+        expect(step.condition.tag.negated).toBe(false);
+        expect(step.condition.tag.args.length).toBe(0);
+      }
     }
   });
 
-  it('parses multiple tags on same step', () => {
+  it('parses multiple tags on same step (implicit AND)', () => {
     const src = `pipeline test =
   |> pg: \`SELECT * FROM users\` @dev @flag(new-ui)`;
     const program = parseProgram(src);
@@ -158,14 +161,22 @@ describe('parseProgram - tags support', () => {
 
     expect(step.kind).toBe('Regular');
     if (step.kind === 'Regular') {
-      expect(step.tags.length).toBe(2);
-      expect(step.tags[0].name).toBe('dev');
-      expect(step.tags[0].negated).toBe(false);
-      expect(step.tags[0].args.length).toBe(0);
-
-      expect(step.tags[1].name).toBe('flag');
-      expect(step.tags[1].negated).toBe(false);
-      expect(step.tags[1].args).toEqual(['new-ui']);
+      // Multiple space-separated tags are now parsed as implicit AND
+      expect(step.condition).toBeDefined();
+      expect(step.condition?.kind).toBe('And');
+      if (step.condition?.kind === 'And') {
+        // Left side: @dev
+        expect(step.condition.left.kind).toBe('Tag');
+        if (step.condition.left.kind === 'Tag') {
+          expect(step.condition.left.tag.name).toBe('dev');
+        }
+        // Right side: @flag(new-ui)
+        expect(step.condition.right.kind).toBe('Tag');
+        if (step.condition.right.kind === 'Tag') {
+          expect(step.condition.right.tag.name).toBe('flag');
+          expect(step.condition.right.tag.args).toEqual(['new-ui']);
+        }
+      }
     }
   });
 
@@ -178,10 +189,12 @@ describe('parseProgram - tags support', () => {
 
     expect(step.kind).toBe('Regular');
     if (step.kind === 'Regular') {
-      expect(step.tags.length).toBe(1);
-      expect(step.tags[0].name).toBe('prod');
-      expect(step.tags[0].negated).toBe(true);
-      expect(step.tags[0].args.length).toBe(0);
+      expect(step.condition).toBeDefined();
+      expect(step.condition?.kind).toBe('Tag');
+      if (step.condition?.kind === 'Tag') {
+        expect(step.condition.tag.name).toBe('prod');
+        expect(step.condition.tag.negated).toBe(true);
+      }
     }
   });
 
@@ -194,10 +207,13 @@ describe('parseProgram - tags support', () => {
 
     expect(step.kind).toBe('Regular');
     if (step.kind === 'Regular') {
-      expect(step.tags.length).toBe(1);
-      expect(step.tags[0].name).toBe('async');
-      expect(step.tags[0].negated).toBe(false);
-      expect(step.tags[0].args).toEqual(['user']);
+      expect(step.condition).toBeDefined();
+      expect(step.condition?.kind).toBe('Tag');
+      if (step.condition?.kind === 'Tag') {
+        expect(step.condition.tag.name).toBe('async');
+        expect(step.condition.tag.negated).toBe(false);
+        expect(step.condition.tag.args).toEqual(['user']);
+      }
     }
   });
 
@@ -210,10 +226,13 @@ describe('parseProgram - tags support', () => {
 
     expect(step.kind).toBe('Regular');
     if (step.kind === 'Regular') {
-      expect(step.tags.length).toBe(1);
-      expect(step.tags[0].name).toBe('flag');
-      expect(step.tags[0].negated).toBe(false);
-      expect(step.tags[0].args).toEqual(['beta', 'staff']);
+      expect(step.condition).toBeDefined();
+      expect(step.condition?.kind).toBe('Tag');
+      if (step.condition?.kind === 'Tag') {
+        expect(step.condition.tag.name).toBe('flag');
+        expect(step.condition.tag.negated).toBe(false);
+        expect(step.condition.tag.args).toEqual(['beta', 'staff']);
+      }
     }
   });
 
@@ -226,7 +245,7 @@ describe('parseProgram - tags support', () => {
 
     pipeline.pipeline.steps.forEach(step => {
       if (step.kind === 'Regular') {
-        expect(step.tags).toEqual([]);
+        expect(step.condition).toBeUndefined();
       }
     });
   });
@@ -251,7 +270,8 @@ describe('parseProgram - tags support', () => {
     const program = parseProgram(src);
     const formatted = prettyPrint(program);
 
-    expect(formatted).toContain('@prod @dev');
+    // Multiple space-separated tags are now parsed as implicit AND
+    expect(formatted).toContain('@prod and @dev');
   });
 
   it('formats negated tag correctly', () => {
@@ -293,10 +313,12 @@ describe('parseProgram - tags support', () => {
     // Currently will stop parsing tags after @flag( due to exception in tryParse
     const step = program.pipelines[0]?.pipeline?.steps?.[0];
     if (step && step.kind === 'Regular') {
-      // If it parsed, there should be no flag tag with empty args
-      const flagTag = step.tags.find(t => t.name === 'flag');
-      if (flagTag) {
-        expect(flagTag.args.length).toBeGreaterThan(0);
+      // If it parsed with a condition, check the tag
+      if (step.condition && step.condition.kind === 'Tag') {
+        const tag = step.condition.tag;
+        if (tag.name === 'flag') {
+          expect(tag.args.length).toBeGreaterThan(0);
+        }
       }
     }
   });
@@ -308,10 +330,9 @@ describe('parseProgram - tags support', () => {
     // Parser should either reject or produce diagnostic
     const step = program.pipelines[0]?.pipeline?.steps?.[0];
     if (step && step.kind === 'Regular') {
-      // If it parsed, check what happened
-      const flagTag = step.tags.find(t => t.name === 'flag');
-      // tryParse will have failed, so tag should not exist or should be incomplete
-      expect(flagTag === undefined || flagTag.args.length === 1).toBe(true);
+      // Check condition - tryParse may have failed, so condition might be undefined
+      expect(step.condition === undefined || 
+        (step.condition.kind === 'Tag' && step.condition.tag.args.length === 1)).toBe(true);
     }
   });
 
@@ -322,8 +343,8 @@ describe('parseProgram - tags support', () => {
     // Parser will stop at @ since identifier expected
     const step = program.pipelines[0]?.pipeline?.steps?.[0];
     if (step && step.kind === 'Regular') {
-      // No tags should have been parsed
-      expect(step.tags.length).toBe(0);
+      // No condition should have been parsed
+      expect(step.condition).toBeUndefined();
     }
   });
 
@@ -336,8 +357,11 @@ describe('parseProgram - tags support', () => {
 
     expect(step.kind).toBe('Regular');
     if (step.kind === 'Regular') {
-      expect(step.tags.length).toBe(1);
-      expect(step.tags[0].name).toBe('prod');
+      expect(step.condition).toBeDefined();
+      expect(step.condition?.kind).toBe('Tag');
+      if (step.condition?.kind === 'Tag') {
+        expect(step.condition.tag.name).toBe('prod');
+      }
     }
   });
 
@@ -350,8 +374,11 @@ describe('parseProgram - tags support', () => {
 
     expect(step.kind).toBe('Regular');
     if (step.kind === 'Regular') {
-      expect(step.tags.length).toBe(1);
-      expect(step.tags[0].name).toBe('prod');
+      expect(step.condition).toBeDefined();
+      expect(step.condition?.kind).toBe('Tag');
+      if (step.condition?.kind === 'Tag') {
+        expect(step.condition.tag.name).toBe('prod');
+      }
     }
   });
 });

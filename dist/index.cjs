@@ -25,6 +25,7 @@ __export(index_exports, {
   formatPipelineStep: () => formatPipelineStep,
   formatStepConfig: () => formatStepConfig,
   formatTag: () => formatTag,
+  formatTagExpr: () => formatTagExpr,
   formatTags: () => formatTags,
   formatWhen: () => formatWhen,
   getPipelineRanges: () => getPipelineRanges,
@@ -492,10 +493,40 @@ var Parser = class {
     this.expect(":");
     this.skipInlineSpaces();
     const { config, configType } = this.parseStepConfig();
-    const tags = this.parseTags();
+    const condition = this.parseStepCondition();
     const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
-    return { kind: "Regular", name, config, configType, tags, parsedJoinTargets };
+    return { kind: "Regular", name, config, configType, condition, parsedJoinTargets };
+  }
+  /**
+   * Parse optional step condition (tag expression after the config)
+   * Supports:
+   *   - @tag (single tag)
+   *   - @tag @tag2 (implicit AND for backwards compatibility)
+   *   - @tag and @tag2 (explicit AND)
+   *   - @tag or @tag2 (explicit OR)
+   *   - (@tag or @tag2) and @tag3 (grouping)
+   */
+  parseStepCondition() {
+    this.skipInlineSpaces();
+    const ch = this.cur();
+    if (ch !== "@" && ch !== "(") {
+      return void 0;
+    }
+    let expr = this.parseTagExpr();
+    while (true) {
+      this.skipInlineSpaces();
+      const ch2 = this.cur();
+      if (ch2 === "\n" || ch2 === "\r" || ch2 === "#" || this.text.startsWith("//", this.pos)) {
+        break;
+      }
+      if (ch2 !== "@") {
+        break;
+      }
+      const nextTag = this.parseTag();
+      expr = { kind: "And", left: expr, right: { kind: "Tag", tag: nextTag } };
+    }
+    return expr;
   }
   /**
    * Pre-parse join config into task names at parse time.
@@ -609,11 +640,69 @@ var Parser = class {
     this.skipSpaces();
     this.expect("case");
     this.skipInlineSpaces();
-    const tag = this.parseTag();
+    const condition = this.parseTagExpr();
+    this.skipInlineSpaces();
     this.expect(":");
     this.skipSpaces();
     const pipeline = this.parseIfPipeline("case", "default:", "end");
-    return { tag, pipeline };
+    return { condition, pipeline };
+  }
+  /**
+   * Parse a tag expression with boolean operators (and, or) and grouping
+   * Grammar (precedence: AND > OR):
+   *   tag_expr := or_expr
+   *   or_expr  := and_expr ("or" and_expr)*
+   *   and_expr := primary ("and" primary)*
+   *   primary  := tag | "(" tag_expr ")"
+   */
+  parseTagExpr() {
+    return this.parseOrExpr();
+  }
+  parseOrExpr() {
+    let left = this.parseAndExpr();
+    while (true) {
+      const saved = this.pos;
+      this.skipInlineSpaces();
+      if (this.text.startsWith("or", this.pos) && !this.isIdentCont(this.text[this.pos + 2] || "")) {
+        this.pos += 2;
+        this.skipInlineSpaces();
+        const right = this.parseAndExpr();
+        left = { kind: "Or", left, right };
+      } else {
+        this.pos = saved;
+        break;
+      }
+    }
+    return left;
+  }
+  parseAndExpr() {
+    let left = this.parseTagPrimary();
+    while (true) {
+      const saved = this.pos;
+      this.skipInlineSpaces();
+      if (this.text.startsWith("and", this.pos) && !this.isIdentCont(this.text[this.pos + 3] || "")) {
+        this.pos += 3;
+        this.skipInlineSpaces();
+        const right = this.parseTagPrimary();
+        left = { kind: "And", left, right };
+      } else {
+        this.pos = saved;
+        break;
+      }
+    }
+    return left;
+  }
+  parseTagPrimary() {
+    if (this.cur() === "(") {
+      this.pos++;
+      this.skipInlineSpaces();
+      const expr = this.parseTagExpr();
+      this.skipInlineSpaces();
+      this.expect(")");
+      return expr;
+    }
+    const tag = this.parseTag();
+    return { kind: "Tag", tag };
   }
   parseIfPipeline(...stopKeywords) {
     const steps = [];
@@ -1136,8 +1225,8 @@ function formatConfigValue(value) {
 function formatPipelineStep(step, indent = "  ") {
   if (step.kind === "Regular") {
     const configPart = formatStepConfig(step.config, step.configType);
-    const tagsPart = step.tags.length > 0 ? " " + formatTags(step.tags) : "";
-    return `${indent}|> ${step.name}: ${configPart}${tagsPart}`;
+    const conditionPart = step.condition ? " " + formatTagExpr(step.condition) : "";
+    return `${indent}|> ${step.name}: ${configPart}${conditionPart}`;
   } else if (step.kind === "Result") {
     const lines = [`${indent}|> result`];
     step.branches.forEach((branch) => {
@@ -1167,7 +1256,7 @@ function formatPipelineStep(step, indent = "  ") {
   } else if (step.kind === "Dispatch") {
     const lines = [`${indent}|> dispatch`];
     step.branches.forEach((branch) => {
-      lines.push(`${indent}  case ${formatTag(branch.tag)}:`);
+      lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
       branch.pipeline.steps.forEach((branchStep) => {
         lines.push(formatPipelineStep(branchStep, indent + "    "));
       });
@@ -1206,6 +1295,19 @@ function formatTag(tag) {
   const args = tag.args.length > 0 ? `(${tag.args.join(",")})` : "";
   return `@${negation}${tag.name}${args}`;
 }
+function formatTagExpr(expr) {
+  switch (expr.kind) {
+    case "Tag":
+      return formatTag(expr.tag);
+    case "And": {
+      const leftStr = expr.left.kind === "Or" ? `(${formatTagExpr(expr.left)})` : formatTagExpr(expr.left);
+      const rightStr = expr.right.kind === "Or" ? `(${formatTagExpr(expr.right)})` : formatTagExpr(expr.right);
+      return `${leftStr} and ${rightStr}`;
+    }
+    case "Or":
+      return `${formatTagExpr(expr.left)} or ${formatTagExpr(expr.right)}`;
+  }
+}
 function formatPipelineRef(ref) {
   if (ref.kind === "Named") {
     return [`  |> pipeline: ${ref.name}`];
@@ -1234,6 +1336,7 @@ function formatWhen(when) {
   formatPipelineStep,
   formatStepConfig,
   formatTag,
+  formatTagExpr,
   formatTags,
   formatWhen,
   getPipelineRanges,
