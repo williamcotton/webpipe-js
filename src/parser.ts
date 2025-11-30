@@ -142,6 +142,9 @@ export interface It {
   mocks: Mock[];
   when: When;
   input?: string;
+  body?: string;
+  headers?: string;
+  cookies?: string;
   conditions: Condition[];
 }
 
@@ -153,6 +156,7 @@ export type When =
 export interface Condition {
   conditionType: 'Then' | 'And';
   field: string;
+  headerName?: string;
   jqExpr?: string;
   comparison: string;
   value: string;
@@ -1177,7 +1181,24 @@ class Parser {
     this.skipInlineSpaces();
     const field = this.consumeWhile((c) => c !== ' ' && c !== '\n' && c !== '`');
     this.skipInlineSpaces();
-    const jqExpr = this.tryParse(() => this.parseBacktickString());
+
+    // Check if field is "header" - if so, parse header name
+    let headerName: string | undefined;
+    if (field === 'header') {
+      const h1 = this.tryParse(() => this.parseBacktickString());
+      if (h1 !== null) {
+        headerName = h1;
+      } else {
+        const h2 = this.tryParse(() => this.parseQuotedString());
+        if (h2 !== null) {
+          headerName = h2;
+        }
+      }
+      this.skipInlineSpaces();
+    }
+
+    // Optional jq expression (not for header assertions)
+    const jqExpr = headerName === undefined ? this.tryParse(() => this.parseBacktickString()) : null;
     this.skipInlineSpaces();
     const comparison = this.consumeWhile((c) => c !== ' ' && c !== '\n');
     this.skipInlineSpaces();
@@ -1188,7 +1209,7 @@ class Parser {
       if (v2 !== null) return v2;
       return this.consumeWhile((c) => c !== '\n');
     })();
-    return { conditionType: ct, field, jqExpr: jqExpr ?? undefined, comparison, value };
+    return { conditionType: ct, field, headerName: headerName ?? undefined, jqExpr: jqExpr ?? undefined, comparison, value };
   }
 
   private parseMockHead(prefixWord: 'with' | 'and'): Mock {
@@ -1234,15 +1255,68 @@ class Parser {
     const when = this.parseWhen();
     this.skipSpaces();
 
-    const input = this.tryParse(() => {
-      this.expect('with');
-      this.skipInlineSpaces();
-      this.expect('input');
-      this.skipInlineSpaces();
-      const v = this.parseBacktickString();
-      this.skipSpaces();
-      return v;
-    }) ?? undefined;
+    // Parse optional with clauses (input, body, headers, cookies)
+    // First one uses "with", subsequent use "and with"
+    let input: string | undefined;
+    let body: string | undefined;
+    let headers: string | undefined;
+    let cookies: string | undefined;
+    let firstWithClause = true;
+
+    while (true) {
+      const parsed = this.tryParse(() => {
+        if (firstWithClause) {
+          this.expect('with');
+        } else {
+          this.expect('and');
+          this.skipInlineSpaces();
+          this.expect('with');
+        }
+        this.skipInlineSpaces();
+
+        // Try each type
+        if (this.text.startsWith('input', this.pos)) {
+          this.expect('input');
+          this.skipInlineSpaces();
+          const v = this.parseBacktickString();
+          this.skipSpaces();
+          return { type: 'input', value: v };
+        } else if (this.text.startsWith('body', this.pos)) {
+          this.expect('body');
+          this.skipInlineSpaces();
+          const v = this.parseBacktickString();
+          this.skipSpaces();
+          return { type: 'body', value: v };
+        } else if (this.text.startsWith('headers', this.pos)) {
+          this.expect('headers');
+          this.skipInlineSpaces();
+          const v = this.parseBacktickString();
+          this.skipSpaces();
+          return { type: 'headers', value: v };
+        } else if (this.text.startsWith('cookies', this.pos)) {
+          this.expect('cookies');
+          this.skipInlineSpaces();
+          const v = this.parseBacktickString();
+          this.skipSpaces();
+          return { type: 'cookies', value: v };
+        } else if (this.text.startsWith('mock', this.pos)) {
+          // This is a mock, not a with clause we handle here
+          throw new Error('mock');
+        } else {
+          throw new Error('unknown with clause');
+        }
+      });
+
+      if (!parsed) break;
+
+      // Assign to appropriate variable
+      if (parsed.type === 'input') input = parsed.value;
+      else if (parsed.type === 'body') body = parsed.value;
+      else if (parsed.type === 'headers') headers = parsed.value;
+      else if (parsed.type === 'cookies') cookies = parsed.value;
+
+      firstWithClause = false;
+    }
 
     const extraMocks: Mock[] = [];
     while (true) {
@@ -1259,7 +1333,7 @@ class Parser {
       conditions.push(c);
     }
 
-    return { name, mocks: [...mocks, ...extraMocks], when, input, conditions };
+    return { name, mocks: [...mocks, ...extraMocks], when, input, body, headers, cookies, conditions };
   }
 
   private parseDescribe(): Describe {
@@ -1413,11 +1487,15 @@ export function printMock(mock: Mock, indent: string = '  '): string {
 
 export function printCondition(condition: Condition, indent: string = '    '): string {
   const condType = condition.conditionType.toLowerCase();
-  const jqPart = condition.jqExpr ? ` \`${condition.jqExpr}\`` : '';
-  const value = condition.value.startsWith('`') ? condition.value : 
+  const fieldPart = condition.headerName
+    ? `${condition.field} "${condition.headerName}"`
+    : condition.jqExpr
+      ? `${condition.field} \`${condition.jqExpr}\``
+      : condition.field;
+  const value = condition.value.startsWith('`') ? condition.value :
                (condition.value.includes('\n') || condition.value.includes('{') || condition.value.includes('[')) ? `\`${condition.value}\`` :
                condition.value;
-  return `${indent}${condType} ${condition.field}${jqPart} ${condition.comparison} ${value}`;
+  return `${indent}${condType} ${fieldPart} ${condition.comparison} ${value}`;
 }
 
 export function printTest(test: It): string {
@@ -1429,6 +1507,15 @@ export function printTest(test: It): string {
   lines.push(`    when ${formatWhen(test.when)}`);
   if (test.input) {
     lines.push(`    with input \`${test.input}\``);
+  }
+  if (test.body) {
+    lines.push(`    with body \`${test.body}\``);
+  }
+  if (test.headers) {
+    lines.push(`    with headers \`${test.headers}\``);
+  }
+  if (test.cookies) {
+    lines.push(`    with cookies \`${test.cookies}\``);
   }
   test.conditions.forEach(condition => {
     lines.push(printCondition(condition));

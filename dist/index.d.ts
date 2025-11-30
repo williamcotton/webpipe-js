@@ -163,6 +163,9 @@ interface It {
     mocks: Mock[];
     when: When;
     input?: string;
+    body?: string;
+    headers?: string;
+    cookies?: string;
     conditions: Condition[];
 }
 type When = {
@@ -180,6 +183,7 @@ type When = {
 interface Condition {
     conditionType: 'Then' | 'And';
     field: string;
+    headerName?: string;
     jqExpr?: string;
     comparison: string;
     value: string;
