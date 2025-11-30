@@ -95,6 +95,12 @@ export interface Tag {
   args: string[];    // ["new-ui", "beta"] for @flag(new-ui,beta)
 }
 
+/** A boolean expression of tags for dispatch routing */
+export type TagExpr =
+  | { kind: 'Tag'; tag: Tag }
+  | { kind: 'And'; left: TagExpr; right: TagExpr }
+  | { kind: 'Or'; left: TagExpr; right: TagExpr };
+
 export type PipelineStep =
   | { kind: 'Regular'; name: string; config: string; configType: ConfigType; tags: Tag[]; parsedJoinTargets?: string[] }
   | { kind: 'Result'; branches: ResultBranch[] }
@@ -103,7 +109,7 @@ export type PipelineStep =
   | { kind: 'Foreach'; selector: string; pipeline: Pipeline };
 
 export interface DispatchBranch {
-  tag: Tag;
+  condition: TagExpr;
   pipeline: Pipeline;
 }
 
@@ -854,12 +860,81 @@ class Parser {
     this.skipSpaces();
     this.expect('case');
     this.skipInlineSpaces();
-    const tag = this.parseTag();
+    const condition = this.parseTagExpr();
+    this.skipInlineSpaces();
     this.expect(':');
     this.skipSpaces();
     // Parse pipeline (stops when it sees 'case', 'default', 'end', or non-pipeline content)
     const pipeline = this.parseIfPipeline('case', 'default:', 'end');
-    return { tag, pipeline };
+    return { condition, pipeline };
+  }
+
+  /**
+   * Parse a tag expression with boolean operators (and, or) and grouping
+   * Grammar (precedence: AND > OR):
+   *   tag_expr := or_expr
+   *   or_expr  := and_expr ("or" and_expr)*
+   *   and_expr := primary ("and" primary)*
+   *   primary  := tag | "(" tag_expr ")"
+   */
+  private parseTagExpr(): TagExpr {
+    return this.parseOrExpr();
+  }
+
+  private parseOrExpr(): TagExpr {
+    let left = this.parseAndExpr();
+    
+    while (true) {
+      const saved = this.pos;
+      this.skipInlineSpaces();
+      if (this.text.startsWith('or', this.pos) && !this.isIdentCont(this.text[this.pos + 2] || '')) {
+        this.pos += 2;
+        this.skipInlineSpaces();
+        const right = this.parseAndExpr();
+        left = { kind: 'Or', left, right };
+      } else {
+        this.pos = saved;
+        break;
+      }
+    }
+    
+    return left;
+  }
+
+  private parseAndExpr(): TagExpr {
+    let left = this.parseTagPrimary();
+    
+    while (true) {
+      const saved = this.pos;
+      this.skipInlineSpaces();
+      if (this.text.startsWith('and', this.pos) && !this.isIdentCont(this.text[this.pos + 3] || '')) {
+        this.pos += 3;
+        this.skipInlineSpaces();
+        const right = this.parseTagPrimary();
+        left = { kind: 'And', left, right };
+      } else {
+        this.pos = saved;
+        break;
+      }
+    }
+    
+    return left;
+  }
+
+  private parseTagPrimary(): TagExpr {
+    // Try grouped expression first: ( expr )
+    if (this.cur() === '(') {
+      this.pos++; // consume '('
+      this.skipInlineSpaces();
+      const expr = this.parseTagExpr();
+      this.skipInlineSpaces();
+      this.expect(')');
+      return expr;
+    }
+    
+    // Single tag
+    const tag = this.parseTag();
+    return { kind: 'Tag', tag };
   }
 
   private parseIfPipeline(...stopKeywords: string[]): Pipeline {
@@ -1495,7 +1570,7 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  '): s
     const lines: string[] = [`${indent}|> dispatch`];
     // Format case branches
     step.branches.forEach(branch => {
-      lines.push(`${indent}  case ${formatTag(branch.tag)}:`);
+      lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
       branch.pipeline.steps.forEach(branchStep => {
         lines.push(formatPipelineStep(branchStep, indent + '    '));
       });
@@ -1539,6 +1614,21 @@ export function formatTag(tag: Tag): string {
   const negation = tag.negated ? '!' : '';
   const args = tag.args.length > 0 ? `(${tag.args.join(',')})` : '';
   return `@${negation}${tag.name}${args}`;
+}
+
+export function formatTagExpr(expr: TagExpr): string {
+  switch (expr.kind) {
+    case 'Tag':
+      return formatTag(expr.tag);
+    case 'And': {
+      // Add parentheses around OR expressions inside AND for clarity
+      const leftStr = expr.left.kind === 'Or' ? `(${formatTagExpr(expr.left)})` : formatTagExpr(expr.left);
+      const rightStr = expr.right.kind === 'Or' ? `(${formatTagExpr(expr.right)})` : formatTagExpr(expr.right);
+      return `${leftStr} and ${rightStr}`;
+    }
+    case 'Or':
+      return `${formatTagExpr(expr.left)} or ${formatTagExpr(expr.right)}`;
+  }
 }
 
 export function formatPipelineRef(ref: PipelineRef): string[] {

@@ -491,15 +491,23 @@ describe('parseProgram - dispatch step', () => {
       if (dispatchStep.kind === 'Dispatch') {
         expect(dispatchStep.branches.length).toBe(2);
 
-        // Check first case
-        expect(dispatchStep.branches[0].tag.name).toBe('flag');
-        expect(dispatchStep.branches[0].tag.args).toEqual(['experimental']);
-        expect(dispatchStep.branches[0].tag.negated).toBe(false);
+        // Check first case - condition is now a TagExpr
+        const cond0 = dispatchStep.branches[0].condition;
+        expect(cond0.kind).toBe('Tag');
+        if (cond0.kind === 'Tag') {
+          expect(cond0.tag.name).toBe('flag');
+          expect(cond0.tag.args).toEqual(['experimental']);
+          expect(cond0.tag.negated).toBe(false);
+        }
         expect(dispatchStep.branches[0].pipeline.steps.length).toBe(1);
 
         // Check second case
-        expect(dispatchStep.branches[1].tag.name).toBe('env');
-        expect(dispatchStep.branches[1].tag.args).toEqual(['dev']);
+        const cond1 = dispatchStep.branches[1].condition;
+        expect(cond1.kind).toBe('Tag');
+        if (cond1.kind === 'Tag') {
+          expect(cond1.tag.name).toBe('env');
+          expect(cond1.tag.args).toEqual(['dev']);
+        }
 
         // Check default
         expect(dispatchStep.default).toBeDefined();
@@ -544,9 +552,13 @@ describe('parseProgram - dispatch step', () => {
       const dispatchStep = route.pipeline.pipeline.steps[0];
 
       if (dispatchStep.kind === 'Dispatch') {
-        expect(dispatchStep.branches[0].tag.name).toBe('env');
-        expect(dispatchStep.branches[0].tag.negated).toBe(true);
-        expect(dispatchStep.branches[0].tag.args).toEqual(['production']);
+        const cond = dispatchStep.branches[0].condition;
+        expect(cond.kind).toBe('Tag');
+        if (cond.kind === 'Tag') {
+          expect(cond.tag.name).toBe('env');
+          expect(cond.tag.negated).toBe(true);
+          expect(cond.tag.args).toEqual(['production']);
+        }
       }
     }
   });
@@ -636,9 +648,17 @@ describe('parseProgram - dispatch step', () => {
 
       if (dispatchStep.kind === 'Dispatch') {
         expect(dispatchStep.branches.length).toBe(2);
-        expect(dispatchStep.branches[0].tag.name).toBe('flag');
-        expect(dispatchStep.branches[0].tag.args).toEqual(['a']);
-        expect(dispatchStep.branches[1].tag.args).toEqual(['b']);
+        const cond0 = dispatchStep.branches[0].condition;
+        const cond1 = dispatchStep.branches[1].condition;
+        expect(cond0.kind).toBe('Tag');
+        expect(cond1.kind).toBe('Tag');
+        if (cond0.kind === 'Tag') {
+          expect(cond0.tag.name).toBe('flag');
+          expect(cond0.tag.args).toEqual(['a']);
+        }
+        if (cond1.kind === 'Tag') {
+          expect(cond1.tag.args).toEqual(['b']);
+        }
         expect(dispatchStep.default).toBeDefined();
       }
     }
@@ -669,7 +689,11 @@ describe('parseProgram - dispatch step', () => {
 
         if (firstBranchSteps[0].kind === 'Dispatch') {
           expect(firstBranchSteps[0].branches.length).toBe(1);
-          expect(firstBranchSteps[0].branches[0].tag.name).toBe('flag');
+          const innerCond = firstBranchSteps[0].branches[0].condition;
+          expect(innerCond.kind).toBe('Tag');
+          if (innerCond.kind === 'Tag') {
+            expect(innerCond.tag.name).toBe('flag');
+          }
         }
       }
     }
