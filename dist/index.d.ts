@@ -187,6 +187,8 @@ interface Condition {
     jqExpr?: string;
     comparison: string;
     value: string;
+    isCallAssertion?: boolean;
+    callTarget?: string;
 }
 type DiagnosticSeverity = 'error' | 'warning' | 'info';
 interface ParseDiagnostic {

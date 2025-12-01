@@ -879,6 +879,39 @@ var Parser = class {
     this.skipInlineSpaces();
     const field = this.consumeWhile((c) => c !== " " && c !== "\n" && c !== "`");
     this.skipInlineSpaces();
+    if (field === "call") {
+      const callType = this.consumeWhile((c) => c !== " ");
+      this.skipInlineSpaces();
+      const callName = this.consumeWhile((c) => c !== " " && c !== "\n");
+      const callTarget = `${callType}.${callName}`;
+      this.skipInlineSpaces();
+      let comparison2;
+      if (this.text.startsWith("with arguments", this.pos)) {
+        this.pos += 14;
+        comparison2 = "with arguments";
+      } else if (this.text.startsWith("with", this.pos)) {
+        this.pos += 4;
+        comparison2 = "with";
+      } else {
+        throw new Error('expected "with" or "with arguments"');
+      }
+      this.skipInlineSpaces();
+      const value2 = (() => {
+        const v1 = this.tryParse(() => this.parseBacktickString());
+        if (v1 !== null) return v1;
+        const v2 = this.tryParse(() => this.parseQuotedString());
+        if (v2 !== null) return v2;
+        return this.consumeWhile((c) => c !== "\n");
+      })();
+      return {
+        conditionType: ct,
+        field: "call",
+        comparison: comparison2,
+        value: value2,
+        isCallAssertion: true,
+        callTarget
+      };
+    }
     let headerName;
     if (field === "header") {
       const h1 = this.tryParse(() => this.parseBacktickString());
@@ -911,7 +944,15 @@ var Parser = class {
     this.skipInlineSpaces();
     this.expect("mock");
     this.skipInlineSpaces();
-    const target = this.consumeWhile((c) => c !== " " && c !== "\n");
+    let target;
+    if (this.text.startsWith("query ", this.pos) || this.text.startsWith("mutation ", this.pos)) {
+      const type = this.consumeWhile((c) => c !== " ");
+      this.skipInlineSpaces();
+      const name = this.consumeWhile((c) => c !== " " && c !== "\n");
+      target = `${type}.${name}`;
+    } else {
+      target = this.consumeWhile((c) => c !== " " && c !== "\n");
+    }
     this.skipInlineSpaces();
     this.expect("returning");
     this.skipInlineSpaces();
@@ -1020,17 +1061,25 @@ var Parser = class {
     const inlineComment = this.parseInlineComment();
     this.skipSpaces();
     const mocks = [];
-    while (true) {
-      const m = this.tryParse(() => this.parseMock());
-      if (!m) break;
-      mocks.push(m);
-      this.skipSpaces();
-    }
     const tests = [];
     while (true) {
+      this.skipSpaces();
+      const withMock = this.tryParse(() => this.parseMock());
+      if (withMock) {
+        mocks.push(withMock);
+        continue;
+      }
+      const andMock = this.tryParse(() => this.parseAndMock());
+      if (andMock) {
+        mocks.push(andMock);
+        continue;
+      }
       const it = this.tryParse(() => this.parseIt());
-      if (!it) break;
-      tests.push(it);
+      if (it) {
+        tests.push(it);
+        continue;
+      }
+      break;
     }
     return { name, mocks, tests, inlineComment: inlineComment || void 0 };
   }

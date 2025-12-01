@@ -160,6 +160,8 @@ export interface Condition {
   jqExpr?: string;
   comparison: string;
   value: string;
+  isCallAssertion?: boolean;
+  callTarget?: string;
 }
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
@@ -1182,6 +1184,47 @@ class Parser {
     const field = this.consumeWhile((c) => c !== ' ' && c !== '\n' && c !== '`');
     this.skipInlineSpaces();
 
+    // Check if this is a call assertion: "then call query users with ..."
+    if (field === 'call') {
+      // Parse call target: "query users" or "mutation createTodo"
+      const callType = this.consumeWhile((c) => c !== ' '); // "query" or "mutation"
+      this.skipInlineSpaces();
+      const callName = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+      const callTarget = `${callType}.${callName}`;
+      this.skipInlineSpaces();
+
+      // Parse comparison (typically "with" or "with arguments")
+      let comparison: string;
+      if (this.text.startsWith('with arguments', this.pos)) {
+        this.pos += 14; // length of "with arguments"
+        comparison = 'with arguments';
+      } else if (this.text.startsWith('with', this.pos)) {
+        this.pos += 4; // length of "with"
+        comparison = 'with';
+      } else {
+        throw new Error('expected "with" or "with arguments"');
+      }
+      this.skipInlineSpaces();
+
+      // Parse value (expected arguments)
+      const value = (() => {
+        const v1 = this.tryParse(() => this.parseBacktickString());
+        if (v1 !== null) return v1;
+        const v2 = this.tryParse(() => this.parseQuotedString());
+        if (v2 !== null) return v2;
+        return this.consumeWhile((c) => c !== '\n');
+      })();
+
+      return {
+        conditionType: ct,
+        field: 'call',
+        comparison,
+        value,
+        isCallAssertion: true,
+        callTarget,
+      };
+    }
+
     // Check if field is "header" - if so, parse header name
     let headerName: string | undefined;
     if (field === 'header') {
@@ -1218,7 +1261,18 @@ class Parser {
     this.skipInlineSpaces();
     this.expect('mock');
     this.skipInlineSpaces();
-    const target = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+
+    // Support "query <name>" or "mutation <name>" or single identifier
+    let target: string;
+    if (this.text.startsWith('query ', this.pos) || this.text.startsWith('mutation ', this.pos)) {
+      const type = this.consumeWhile((c) => c !== ' ');
+      this.skipInlineSpaces();
+      const name = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+      target = `${type}.${name}`;
+    } else {
+      target = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+    }
+
     this.skipInlineSpaces();
     this.expect('returning');
     this.skipInlineSpaces();
@@ -1346,19 +1400,36 @@ class Parser {
     const inlineComment = this.parseInlineComment();
     this.skipSpaces();
 
+    // Parse mocks and tests in any order (mocks can appear between tests)
     const mocks: Mock[] = [];
-    while (true) {
-      const m = this.tryParse(() => this.parseMock());
-      if (!m) break;
-      mocks.push(m);
-      this.skipSpaces();
-    }
-
     const tests: It[] = [];
+
     while (true) {
+      this.skipSpaces();
+
+      // Try to parse a mock (with mock)
+      const withMock = this.tryParse(() => this.parseMock());
+      if (withMock) {
+        mocks.push(withMock);
+        continue;
+      }
+
+      // Try to parse a mock (and mock)
+      const andMock = this.tryParse(() => this.parseAndMock());
+      if (andMock) {
+        mocks.push(andMock);
+        continue;
+      }
+
+      // Try to parse an it block
       const it = this.tryParse(() => this.parseIt());
-      if (!it) break;
-      tests.push(it);
+      if (it) {
+        tests.push(it);
+        continue;
+      }
+
+      // Nothing more to parse
+      break;
     }
 
     return { name, mocks, tests, inlineComment: inlineComment || undefined };
