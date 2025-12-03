@@ -867,6 +867,85 @@ var Parser = class {
         callTarget
       };
     }
+    if (field === "selector") {
+      const selectorStr = (() => {
+        const bt = this.tryParse(() => this.parseBacktickString());
+        if (bt !== null) return bt;
+        const qt = this.tryParse(() => this.parseQuotedString());
+        if (qt !== null) return qt;
+        throw new Error("selector requires quoted string");
+      })();
+      this.skipInlineSpaces();
+      const operation = this.consumeWhile((c) => c !== " " && c !== "\n");
+      this.skipInlineSpaces();
+      let domAssert;
+      let comparison2;
+      let value2;
+      if (operation === "exists") {
+        domAssert = { kind: "Exists" };
+        comparison2 = "exists";
+        value2 = "true";
+      } else if (operation === "does") {
+        this.expect("not");
+        this.skipInlineSpaces();
+        this.expect("exist");
+        domAssert = { kind: "Exists" };
+        comparison2 = "does_not_exist";
+        value2 = "false";
+      } else if (operation === "text") {
+        domAssert = { kind: "Text" };
+        this.skipInlineSpaces();
+        comparison2 = this.consumeWhile((c) => c !== " " && c !== "\n");
+        this.skipInlineSpaces();
+        value2 = (() => {
+          const v1 = this.tryParse(() => this.parseBacktickString());
+          if (v1 !== null) return v1;
+          const v2 = this.tryParse(() => this.parseQuotedString());
+          if (v2 !== null) return v2;
+          return this.consumeWhile((c) => c !== "\n");
+        })();
+      } else if (operation === "count") {
+        domAssert = { kind: "Count" };
+        let compParts = "";
+        while (this.pos < this.text.length && this.text[this.pos] !== "\n") {
+          const c = this.text[this.pos];
+          if (/\d/.test(c)) break;
+          compParts += c;
+          this.pos++;
+        }
+        comparison2 = compParts.trim();
+        value2 = this.consumeWhile((c) => c !== "\n").trim();
+      } else if (operation === "attribute") {
+        const attrName = (() => {
+          const bt = this.tryParse(() => this.parseBacktickString());
+          if (bt !== null) return bt;
+          const qt = this.tryParse(() => this.parseQuotedString());
+          if (qt !== null) return qt;
+          throw new Error("attribute requires quoted name");
+        })();
+        this.skipInlineSpaces();
+        comparison2 = this.consumeWhile((c) => c !== " " && c !== "\n");
+        this.skipInlineSpaces();
+        value2 = (() => {
+          const v1 = this.tryParse(() => this.parseBacktickString());
+          if (v1 !== null) return v1;
+          const v2 = this.tryParse(() => this.parseQuotedString());
+          if (v2 !== null) return v2;
+          return this.consumeWhile((c) => c !== "\n");
+        })();
+        domAssert = { kind: "Attribute", name: attrName };
+      } else {
+        throw new Error(`Unknown selector operation: ${operation}`);
+      }
+      return {
+        conditionType: ct,
+        field: "selector",
+        comparison: comparison2,
+        value: value2,
+        selector: selectorStr,
+        domAssert
+      };
+    }
     let headerName;
     if (field === "header") {
       const h1 = this.tryParse(() => this.parseBacktickString());
@@ -1149,6 +1228,24 @@ function printMock(mock, indent = "  ") {
 }
 function printCondition(condition, indent = "    ") {
   const condType = condition.conditionType.toLowerCase();
+  if (condition.field === "selector" && condition.selector && condition.domAssert) {
+    const selector = condition.selector;
+    const formatValue = (val) => {
+      if (val.startsWith("`") || val.startsWith('"')) return val;
+      if (val.includes("\n") || val.includes("{") || val.includes("[")) return `\`${val}\``;
+      return `"${val}"`;
+    };
+    if (condition.domAssert.kind === "Exists") {
+      const operation = condition.comparison === "exists" ? "exists" : "does not exist";
+      return `${indent}${condType} selector "${selector}" ${operation}`;
+    } else if (condition.domAssert.kind === "Text") {
+      return `${indent}${condType} selector "${selector}" text ${condition.comparison} ${formatValue(condition.value)}`;
+    } else if (condition.domAssert.kind === "Count") {
+      return `${indent}${condType} selector "${selector}" count ${condition.comparison} ${condition.value}`;
+    } else if (condition.domAssert.kind === "Attribute") {
+      return `${indent}${condType} selector "${selector}" attribute "${condition.domAssert.name}" ${condition.comparison} ${formatValue(condition.value)}`;
+    }
+  }
   const fieldPart = condition.headerName ? `${condition.field} "${condition.headerName}"` : condition.jqExpr ? `${condition.field} \`${condition.jqExpr}\`` : condition.field;
   const value = condition.value.startsWith("`") ? condition.value : condition.value.includes("\n") || condition.value.includes("{") || condition.value.includes("[") ? `\`${condition.value}\`` : condition.value;
   return `${indent}${condType} ${fieldPart} ${condition.comparison} ${value}`;

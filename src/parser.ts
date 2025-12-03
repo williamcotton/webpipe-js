@@ -153,6 +153,12 @@ export type When =
   | { kind: 'ExecutingPipeline'; name: string }
   | { kind: 'ExecutingVariable'; varType: string; name: string };
 
+export type DomAssertType =
+  | { kind: 'Exists' }
+  | { kind: 'Text' }
+  | { kind: 'Count' }
+  | { kind: 'Attribute'; name: string };
+
 export interface Condition {
   conditionType: 'Then' | 'And';
   field: string;
@@ -162,6 +168,8 @@ export interface Condition {
   value: string;
   isCallAssertion?: boolean;
   callTarget?: string;
+  selector?: string;
+  domAssert?: DomAssertType;
 }
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
@@ -1234,6 +1242,99 @@ class Parser {
       };
     }
 
+    // Check if field is "selector" - if so, parse DOM selector assertion
+    if (field === 'selector') {
+      // Parse quoted selector string
+      const selectorStr = (() => {
+        const bt = this.tryParse(() => this.parseBacktickString());
+        if (bt !== null) return bt;
+        const qt = this.tryParse(() => this.parseQuotedString());
+        if (qt !== null) return qt;
+        throw new Error('selector requires quoted string');
+      })();
+
+      this.skipInlineSpaces();
+
+      // Parse operation
+      const operation = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+      this.skipInlineSpaces();
+
+      let domAssert: DomAssertType;
+      let comparison: string;
+      let value: string;
+
+      if (operation === 'exists') {
+        domAssert = { kind: 'Exists' };
+        comparison = 'exists';
+        value = 'true';
+      } else if (operation === 'does') {
+        // Parse "does not exist"
+        this.expect('not');
+        this.skipInlineSpaces();
+        this.expect('exist');
+        domAssert = { kind: 'Exists' };
+        comparison = 'does_not_exist';
+        value = 'false';
+      } else if (operation === 'text') {
+        domAssert = { kind: 'Text' };
+        this.skipInlineSpaces();
+        comparison = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+        this.skipInlineSpaces();
+        value = (() => {
+          const v1 = this.tryParse(() => this.parseBacktickString());
+          if (v1 !== null) return v1;
+          const v2 = this.tryParse(() => this.parseQuotedString());
+          if (v2 !== null) return v2;
+          return this.consumeWhile((c) => c !== '\n');
+        })();
+      } else if (operation === 'count') {
+        domAssert = { kind: 'Count' };
+        // Parse comparison (equals | is greater than | is less than)
+        let compParts = '';
+        while (this.pos < this.text.length && this.text[this.pos] !== '\n') {
+          const c = this.text[this.pos];
+          if (/\d/.test(c)) break; // Stop at first digit
+          compParts += c;
+          this.pos++;
+        }
+        comparison = compParts.trim();
+        value = this.consumeWhile((c) => c !== '\n').trim();
+      } else if (operation === 'attribute') {
+        // Parse attribute name
+        const attrName = (() => {
+          const bt = this.tryParse(() => this.parseBacktickString());
+          if (bt !== null) return bt;
+          const qt = this.tryParse(() => this.parseQuotedString());
+          if (qt !== null) return qt;
+          throw new Error('attribute requires quoted name');
+        })();
+
+        this.skipInlineSpaces();
+        comparison = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+        this.skipInlineSpaces();
+        value = (() => {
+          const v1 = this.tryParse(() => this.parseBacktickString());
+          if (v1 !== null) return v1;
+          const v2 = this.tryParse(() => this.parseQuotedString());
+          if (v2 !== null) return v2;
+          return this.consumeWhile((c) => c !== '\n');
+        })();
+
+        domAssert = { kind: 'Attribute', name: attrName };
+      } else {
+        throw new Error(`Unknown selector operation: ${operation}`);
+      }
+
+      return {
+        conditionType: ct,
+        field: 'selector',
+        comparison,
+        value,
+        selector: selectorStr,
+        domAssert,
+      };
+    }
+
     // Check if field is "header" - if so, parse header name
     let headerName: string | undefined;
     if (field === 'header') {
@@ -1567,6 +1668,29 @@ export function printMock(mock: Mock, indent: string = '  '): string {
 
 export function printCondition(condition: Condition, indent: string = '    '): string {
   const condType = condition.conditionType.toLowerCase();
+
+  // Handle selector conditions
+  if (condition.field === 'selector' && condition.selector && condition.domAssert) {
+    const selector = condition.selector;
+    const formatValue = (val: string): string => {
+      if (val.startsWith('`') || val.startsWith('"')) return val;
+      if (val.includes('\n') || val.includes('{') || val.includes('[')) return `\`${val}\``;
+      return `"${val}"`;
+    };
+
+    if (condition.domAssert.kind === 'Exists') {
+      const operation = condition.comparison === 'exists' ? 'exists' : 'does not exist';
+      return `${indent}${condType} selector "${selector}" ${operation}`;
+    } else if (condition.domAssert.kind === 'Text') {
+      return `${indent}${condType} selector "${selector}" text ${condition.comparison} ${formatValue(condition.value)}`;
+    } else if (condition.domAssert.kind === 'Count') {
+      return `${indent}${condType} selector "${selector}" count ${condition.comparison} ${condition.value}`;
+    } else if (condition.domAssert.kind === 'Attribute') {
+      return `${indent}${condType} selector "${selector}" attribute "${condition.domAssert.name}" ${condition.comparison} ${formatValue(condition.value)}`;
+    }
+  }
+
+  // Handle regular conditions
   const fieldPart = condition.headerName
     ? `${condition.field} "${condition.headerName}"`
     : condition.jqExpr
