@@ -1207,10 +1207,16 @@ var Parser = class {
     this.expect('"');
     const inlineComment = this.parseInlineComment();
     this.skipSpaces();
+    const variables = [];
     const mocks = [];
     const tests = [];
     while (true) {
       this.skipSpaces();
+      const letBinding = this.tryParse(() => this.parseLetBinding());
+      if (letBinding) {
+        variables.push(letBinding);
+        continue;
+      }
       const withMock = this.tryParse(() => this.parseMock());
       if (withMock) {
         mocks.push(withMock);
@@ -1228,7 +1234,7 @@ var Parser = class {
       }
       break;
     }
-    return { name, mocks, tests, inlineComment: inlineComment || void 0 };
+    return { name, variables, mocks, tests, inlineComment: inlineComment || void 0 };
   }
 };
 function parseProgram(text) {

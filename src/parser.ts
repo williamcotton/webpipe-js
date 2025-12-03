@@ -126,6 +126,7 @@ export type ResultBranchType =
 
 export interface Describe {
   name: string;
+  variables: Array<[string, string]>;
   mocks: Mock[];
   tests: It[];
   lineNumber?: number;
@@ -1593,12 +1594,20 @@ class Parser {
     const inlineComment = this.parseInlineComment();
     this.skipSpaces();
 
-    // Parse mocks and tests in any order (mocks can appear between tests)
+    // Parse let bindings, mocks, and tests in any order
+    const variables: Array<[string, string]> = [];
     const mocks: Mock[] = [];
     const tests: It[] = [];
 
     while (true) {
       this.skipSpaces();
+
+      // Try to parse a let binding
+      const letBinding = this.tryParse(() => this.parseLetBinding());
+      if (letBinding) {
+        variables.push(letBinding);
+        continue;
+      }
 
       // Try to parse a mock (with mock)
       const withMock = this.tryParse(() => this.parseMock());
@@ -1625,7 +1634,7 @@ class Parser {
       break;
     }
 
-    return { name, mocks, tests, inlineComment: inlineComment || undefined };
+    return { name, variables, mocks, tests, inlineComment: inlineComment || undefined };
   }
 }
 

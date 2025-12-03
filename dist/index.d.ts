@@ -149,6 +149,7 @@ type ResultBranchType = {
 };
 interface Describe {
     name: string;
+    variables: Array<[string, string]>;
     mocks: Mock[];
     tests: It[];
     lineNumber?: number;
