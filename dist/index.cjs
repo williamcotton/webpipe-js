@@ -1050,6 +1050,36 @@ var Parser = class {
   parseAndMock() {
     return this.parseMockHead("and");
   }
+  parseLetBinding() {
+    this.expect("let");
+    this.skipInlineSpaces();
+    const name = this.parseIdentifier();
+    this.skipInlineSpaces();
+    this.expect("=");
+    this.skipInlineSpaces();
+    const value = (() => {
+      const bt = this.tryParse(() => this.parseBacktickString());
+      if (bt !== null) return bt;
+      const qt = this.tryParse(() => this.parseQuotedString());
+      if (qt !== null) return qt;
+      if (this.text.startsWith("true", this.pos)) {
+        this.pos += 4;
+        return "true";
+      }
+      if (this.text.startsWith("false", this.pos)) {
+        this.pos += 5;
+        return "false";
+      }
+      const num = this.tryParse(() => {
+        const digits = this.consumeWhile((c) => /[0-9]/.test(c));
+        if (digits.length === 0) throw new Error("number");
+        return digits;
+      });
+      if (num !== null) return num;
+      throw new Error("let value");
+    })();
+    return [name, value];
+  }
   parseIt() {
     this.skipSpaces();
     this.expect("it");
@@ -1063,6 +1093,19 @@ var Parser = class {
       const m = this.tryParse(() => this.parseMock());
       if (!m) break;
       mocks.push(m);
+    }
+    const variables = [];
+    while (true) {
+      const letBinding = this.tryParse(() => {
+        const binding = this.parseLetBinding();
+        this.skipSpaces();
+        return binding;
+      });
+      if (letBinding) {
+        variables.push(letBinding);
+        continue;
+      }
+      break;
     }
     this.expect("when");
     this.skipInlineSpaces();
@@ -1133,7 +1176,17 @@ var Parser = class {
       if (!c) break;
       conditions.push(c);
     }
-    return { name, mocks: [...mocks, ...extraMocks], when, input, body, headers, cookies, conditions };
+    return {
+      name,
+      mocks: [...mocks, ...extraMocks],
+      when,
+      variables: variables.length > 0 ? variables : void 0,
+      input,
+      body,
+      headers,
+      cookies,
+      conditions
+    };
   }
   parseDescribe() {
     this.skipSpaces();
@@ -1307,6 +1360,17 @@ function printTest(test) {
     lines.push(printMock(mock, "    "));
   });
   lines.push(`    when ${formatWhen(test.when)}`);
+  if (test.variables) {
+    test.variables.forEach(([name, value]) => {
+      const formattedValue = (() => {
+        if (value.startsWith("`") || value.startsWith('"')) return value;
+        if (value === "true" || value === "false" || /^\d+$/.test(value)) return value;
+        if (value.includes("{") || value.includes("[") || value.includes("\n")) return `\`${value}\``;
+        return `"${value}"`;
+      })();
+      lines.push(`    let ${name} = ${formattedValue}`);
+    });
+  }
   if (test.input) {
     lines.push(`    with input \`${test.input}\``);
   }

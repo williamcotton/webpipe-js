@@ -162,6 +162,7 @@ interface It {
     name: string;
     mocks: Mock[];
     when: When;
+    variables?: Array<[string, string]>;
     input?: string;
     body?: string;
     headers?: string;

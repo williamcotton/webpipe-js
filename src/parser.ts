@@ -141,6 +141,7 @@ export interface It {
   name: string;
   mocks: Mock[];
   when: When;
+  variables?: Array<[string, string]>;
   input?: string;
   body?: string;
   headers?: string;
@@ -1398,6 +1399,48 @@ class Parser {
     return this.parseMockHead('and');
   }
 
+  private parseLetBinding(): [string, string] {
+    this.expect('let');
+    this.skipInlineSpaces();
+    const name = this.parseIdentifier();
+    this.skipInlineSpaces();
+    this.expect('=');
+    this.skipInlineSpaces();
+
+    // Parse value: supports backtick strings, quoted strings, numbers, and booleans
+    const value = (() => {
+      // Try backtick string
+      const bt = this.tryParse(() => this.parseBacktickString());
+      if (bt !== null) return bt;
+
+      // Try quoted string
+      const qt = this.tryParse(() => this.parseQuotedString());
+      if (qt !== null) return qt;
+
+      // Try boolean
+      if (this.text.startsWith('true', this.pos)) {
+        this.pos += 4;
+        return 'true';
+      }
+      if (this.text.startsWith('false', this.pos)) {
+        this.pos += 5;
+        return 'false';
+      }
+
+      // Try number
+      const num = this.tryParse(() => {
+        const digits = this.consumeWhile((c) => /[0-9]/.test(c));
+        if (digits.length === 0) throw new Error('number');
+        return digits;
+      });
+      if (num !== null) return num;
+
+      throw new Error('let value');
+    })();
+
+    return [name, value];
+  }
+
   private parseIt(): It {
     this.skipSpaces();
     this.expect('it');
@@ -1414,13 +1457,27 @@ class Parser {
       mocks.push(m);
     }
 
+    // Parse optional let bindings (before when clause)
+    const variables: Array<[string, string]> = [];
+    while (true) {
+      const letBinding = this.tryParse(() => {
+        const binding = this.parseLetBinding();
+        this.skipSpaces();
+        return binding;
+      });
+      if (letBinding) {
+        variables.push(letBinding);
+        continue;
+      }
+      break;
+    }
+
     this.expect('when');
     this.skipInlineSpaces();
     const when = this.parseWhen();
     this.skipSpaces();
 
-    // Parse optional with clauses (input, body, headers, cookies)
-    // First one uses "with", subsequent use "and with"
+    // Parse optional with clauses
     let input: string | undefined;
     let body: string | undefined;
     let headers: string | undefined;
@@ -1428,6 +1485,7 @@ class Parser {
     let firstWithClause = true;
 
     while (true) {
+      // Try parsing a with clause
       const parsed = this.tryParse(() => {
         if (firstWithClause) {
           this.expect('with');
@@ -1497,7 +1555,17 @@ class Parser {
       conditions.push(c);
     }
 
-    return { name, mocks: [...mocks, ...extraMocks], when, input, body, headers, cookies, conditions };
+    return {
+      name,
+      mocks: [...mocks, ...extraMocks],
+      when,
+      variables: variables.length > 0 ? variables : undefined,
+      input,
+      body,
+      headers,
+      cookies,
+      conditions
+    };
   }
 
   private parseDescribe(): Describe {
@@ -1709,6 +1777,25 @@ export function printTest(test: It): string {
     lines.push(printMock(mock, '    '));
   });
   lines.push(`    when ${formatWhen(test.when)}`);
+
+  // Print let bindings before with clauses
+  if (test.variables) {
+    test.variables.forEach(([name, value]) => {
+      // Format the value based on its type
+      const formattedValue = (() => {
+        // If it's already wrapped, keep it
+        if (value.startsWith('`') || value.startsWith('"')) return value;
+        // If it's a boolean or number, leave it bare
+        if (value === 'true' || value === 'false' || /^\d+$/.test(value)) return value;
+        // If it contains JSON-like content, wrap in backticks
+        if (value.includes('{') || value.includes('[') || value.includes('\n')) return `\`${value}\``;
+        // Otherwise wrap in quotes
+        return `"${value}"`;
+      })();
+      lines.push(`    let ${name} = ${formattedValue}`);
+    });
+  }
+
   if (test.input) {
     lines.push(`    with input \`${test.input}\``);
   }

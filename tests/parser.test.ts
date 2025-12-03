@@ -761,5 +761,19 @@ describe('parseProgram - dispatch step', () => {
     expect(formatted).toContain('case @flag(experimental):');
     expect(formatted).toContain('default:');
   });
+
+  it('parses let bindings before when', () => {
+    const src = `
+describe "Let Test"
+  it "works"
+    let x = 1
+    when calling GET /foo
+    then status is 200
+`;
+    const program = parseProgram(src);
+    const t = program.describes[0].tests[0];
+    expect(t.variables).toHaveLength(1);
+    expect(t.variables![0]).toEqual(['x', '1']);
+  });
 });
 
