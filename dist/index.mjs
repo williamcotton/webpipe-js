@@ -317,7 +317,7 @@ var Parser = class {
     if (this.cur() === ")") {
       throw new ParseFailure("empty tag arguments not allowed", this.pos);
     }
-    args.push(this.parseIdentifier());
+    args.push(this.parseTagArgument());
     this.skipInlineSpaces();
     while (this.cur() === ",") {
       this.pos++;
@@ -325,11 +325,16 @@ var Parser = class {
       if (this.cur() === ")") {
         throw new ParseFailure("trailing comma in tag arguments", this.pos);
       }
-      args.push(this.parseIdentifier());
+      args.push(this.parseTagArgument());
       this.skipInlineSpaces();
     }
     this.expect(")");
     return args;
+  }
+  parseTagArgument() {
+    const bt = this.tryParse(() => this.parseBacktickString());
+    if (bt !== null) return bt;
+    return this.parseIdentifier();
   }
   parseTags() {
     const tags = [];
@@ -1356,7 +1361,13 @@ function formatTags(tags) {
 }
 function formatTag(tag) {
   const negation = tag.negated ? "!" : "";
-  const args = tag.args.length > 0 ? `(${tag.args.join(",")})` : "";
+  const formattedArgs = tag.args.map((arg) => {
+    if (/[^a-zA-Z0-9_-]/.test(arg)) {
+      return `\`${arg}\``;
+    }
+    return arg;
+  });
+  const args = tag.args.length > 0 ? `(${formattedArgs.join(",")})` : "";
   return `@${negation}${tag.name}${args}`;
 }
 function formatTagExpr(expr) {

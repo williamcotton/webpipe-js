@@ -549,8 +549,8 @@ class Parser {
       throw new ParseFailure('empty tag arguments not allowed', this.pos);
     }
 
-    // Parse first arg
-    args.push(this.parseIdentifier());
+    // Parse first arg - can be identifier or backtick string
+    args.push(this.parseTagArgument());
     this.skipInlineSpaces();
 
     // Parse remaining args (comma-separated)
@@ -563,12 +563,21 @@ class Parser {
         throw new ParseFailure('trailing comma in tag arguments', this.pos);
       }
 
-      args.push(this.parseIdentifier());
+      args.push(this.parseTagArgument());
       this.skipInlineSpaces();
     }
 
     this.expect(')');
     return args;
+  }
+
+  private parseTagArgument(): string {
+    // Try backtick string first (for @guard JQ expressions)
+    const bt = this.tryParse(() => this.parseBacktickString());
+    if (bt !== null) return bt;
+
+    // Otherwise parse as identifier
+    return this.parseIdentifier();
   }
 
   private parseTags(): Tag[] {
@@ -1815,7 +1824,15 @@ export function formatTags(tags: Tag[]): string {
 
 export function formatTag(tag: Tag): string {
   const negation = tag.negated ? '!' : '';
-  const args = tag.args.length > 0 ? `(${tag.args.join(',')})` : '';
+  // Format arguments - wrap in backticks if they contain special characters
+  const formattedArgs = tag.args.map(arg => {
+    // If arg contains special characters, wrap in backticks
+    if (/[^a-zA-Z0-9_-]/.test(arg)) {
+      return `\`${arg}\``;
+    }
+    return arg;
+  });
+  const args = tag.args.length > 0 ? `(${formattedArgs.join(',')})` : '';
   return `@${negation}${tag.name}${args}`;
 }
 
