@@ -1407,7 +1407,7 @@ class Parser {
     this.expect('=');
     this.skipInlineSpaces();
 
-    // Parse value: supports backtick strings, quoted strings, numbers, and booleans
+    // Parse value: supports backtick strings, quoted strings, numbers (int/float), booleans, and null
     const value = (() => {
       // Try backtick string
       const bt = this.tryParse(() => this.parseBacktickString());
@@ -1416,6 +1416,12 @@ class Parser {
       // Try quoted string
       const qt = this.tryParse(() => this.parseQuotedString());
       if (qt !== null) return qt;
+
+      // Try null
+      if (this.text.startsWith('null', this.pos)) {
+        this.pos += 4;
+        return 'null';
+      }
 
       // Try boolean
       if (this.text.startsWith('true', this.pos)) {
@@ -1427,10 +1433,19 @@ class Parser {
         return 'false';
       }
 
-      // Try number
+      // Try number (integer or float)
       const num = this.tryParse(() => {
         const digits = this.consumeWhile((c) => /[0-9]/.test(c));
         if (digits.length === 0) throw new Error('number');
+
+        // Check for decimal point (float)
+        if (this.cur() === '.') {
+          this.pos++;
+          const decimals = this.consumeWhile((c) => /[0-9]/.test(c));
+          if (decimals.length === 0) throw new Error('Expected digits after decimal point');
+          return digits + '.' + decimals;
+        }
+
         return digits;
       });
       if (num !== null) return num;

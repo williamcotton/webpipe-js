@@ -1062,6 +1062,10 @@ var Parser = class {
       if (bt !== null) return bt;
       const qt = this.tryParse(() => this.parseQuotedString());
       if (qt !== null) return qt;
+      if (this.text.startsWith("null", this.pos)) {
+        this.pos += 4;
+        return "null";
+      }
       if (this.text.startsWith("true", this.pos)) {
         this.pos += 4;
         return "true";
@@ -1073,6 +1077,12 @@ var Parser = class {
       const num = this.tryParse(() => {
         const digits = this.consumeWhile((c) => /[0-9]/.test(c));
         if (digits.length === 0) throw new Error("number");
+        if (this.cur() === ".") {
+          this.pos++;
+          const decimals = this.consumeWhile((c) => /[0-9]/.test(c));
+          if (decimals.length === 0) throw new Error("Expected digits after decimal point");
+          return digits + "." + decimals;
+        }
         return digits;
       });
       if (num !== null) return num;
