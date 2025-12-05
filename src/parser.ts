@@ -184,6 +184,14 @@ export interface ParseDiagnostic {
   severity: DiagnosticSeverity;
 }
 
+export interface TestLetVariable {
+  name: string;
+  describeName: string;
+  testName?: string;
+  start: number;
+  end: number;
+}
+
 class Parser {
   private readonly text: string;
   private readonly len: number;
@@ -191,6 +199,9 @@ class Parser {
   private diagnostics: ParseDiagnostic[] = [];
   private readonly pipelineRanges: Map<string, { start: number; end: number }> = new Map();
   private readonly variableRanges: Map<string, { start: number; end: number }> = new Map();
+  private readonly testLetVariables: TestLetVariable[] = [];
+  private currentDescribeName: string | null = null;
+  private currentTestName: string | null = null;
 
   constructor(text: string) {
     this.text = text;
@@ -207,6 +218,10 @@ class Parser {
 
   getVariableRanges(): Map<string, { start: number; end: number }> {
     return new Map(this.variableRanges);
+  }
+
+  getTestLetVariables(): TestLetVariable[] {
+    return [...this.testLetVariables];
   }
 
   report(message: string, start: number, end: number, severity: DiagnosticSeverity): void {
@@ -1405,7 +1420,19 @@ class Parser {
   private parseLetBinding(): [string, string, LetValueFormat] {
     this.expect('let');
     this.skipInlineSpaces();
+    const nameStart = this.pos;
     const name = this.parseIdentifier();
+    const nameEnd = this.pos;
+    // Track the position of this let variable with scope information
+    if (this.currentDescribeName !== null) {
+      this.testLetVariables.push({
+        name,
+        describeName: this.currentDescribeName,
+        testName: this.currentTestName || undefined,
+        start: nameStart,
+        end: nameEnd
+      });
+    }
     this.skipInlineSpaces();
     this.expect('=');
     this.skipInlineSpaces();
@@ -1480,6 +1507,9 @@ class Parser {
     const name = this.consumeWhile((c) => c !== '"');
     this.expect('"');
     this.skipSpaces();
+
+    // Set the current test context for let variable tracking
+    this.currentTestName = name;
 
     const mocks: Mock[] = [];
     while (true) {
@@ -1586,6 +1616,9 @@ class Parser {
       conditions.push(c);
     }
 
+    // Clear the test context
+    this.currentTestName = null;
+
     return {
       name,
       mocks: [...mocks, ...extraMocks],
@@ -1608,6 +1641,9 @@ class Parser {
     this.expect('"');
     const inlineComment = this.parseInlineComment();
     this.skipSpaces();
+
+    // Set the current describe context for let variable tracking
+    this.currentDescribeName = name;
 
     // Parse let bindings, mocks, and tests in any order
     const variables: Array<[string, string, LetValueFormat]> = [];
@@ -1649,6 +1685,9 @@ class Parser {
       break;
     }
 
+    // Clear the describe context
+    this.currentDescribeName = null;
+
     return { name, variables, mocks, tests, inlineComment: inlineComment || undefined };
   }
 }
@@ -1674,6 +1713,25 @@ export function getVariableRanges(text: string): Map<string, { start: number; en
   const parser = new Parser(text);
   parser.parseProgram();
   return parser.getVariableRanges();
+}
+
+export function getTestLetVariables(text: string): TestLetVariable[] {
+  const parser = new Parser(text);
+  parser.parseProgram();
+  return parser.getTestLetVariables();
+}
+
+// Deprecated: Use getTestLetVariables() instead
+export function getTestLetVariableRanges(text: string): Map<string, { start: number; end: number }> {
+  const parser = new Parser(text);
+  parser.parseProgram();
+  const variables = parser.getTestLetVariables();
+  const map = new Map<string, { start: number; end: number }>();
+  for (const v of variables) {
+    // For backward compatibility, use just the name as key (last one wins if duplicates)
+    map.set(v.name, { start: v.start, end: v.end });
+  }
+  return map;
 }
 
 class ParseFailure extends Error {

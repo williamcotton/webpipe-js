@@ -5,6 +5,9 @@ var Parser = class {
     this.diagnostics = [];
     this.pipelineRanges = /* @__PURE__ */ new Map();
     this.variableRanges = /* @__PURE__ */ new Map();
+    this.testLetVariables = [];
+    this.currentDescribeName = null;
+    this.currentTestName = null;
     this.text = text;
     this.len = text.length;
   }
@@ -16,6 +19,9 @@ var Parser = class {
   }
   getVariableRanges() {
     return new Map(this.variableRanges);
+  }
+  getTestLetVariables() {
+    return [...this.testLetVariables];
   }
   report(message, start, end, severity) {
     this.diagnostics.push({ message, start, end, severity });
@@ -1003,7 +1009,18 @@ var Parser = class {
   parseLetBinding() {
     this.expect("let");
     this.skipInlineSpaces();
+    const nameStart = this.pos;
     const name = this.parseIdentifier();
+    const nameEnd = this.pos;
+    if (this.currentDescribeName !== null) {
+      this.testLetVariables.push({
+        name,
+        describeName: this.currentDescribeName,
+        testName: this.currentTestName || void 0,
+        start: nameStart,
+        end: nameEnd
+      });
+    }
     this.skipInlineSpaces();
     this.expect("=");
     this.skipInlineSpaces();
@@ -1061,6 +1078,7 @@ var Parser = class {
     const name = this.consumeWhile((c) => c !== '"');
     this.expect('"');
     this.skipSpaces();
+    this.currentTestName = name;
     const mocks = [];
     while (true) {
       const m = this.tryParse(() => this.parseMock());
@@ -1149,6 +1167,7 @@ var Parser = class {
       if (!c) break;
       conditions.push(c);
     }
+    this.currentTestName = null;
     return {
       name,
       mocks: [...mocks, ...extraMocks],
@@ -1170,6 +1189,7 @@ var Parser = class {
     this.expect('"');
     const inlineComment = this.parseInlineComment();
     this.skipSpaces();
+    this.currentDescribeName = name;
     const variables = [];
     const mocks = [];
     const tests = [];
@@ -1197,6 +1217,7 @@ var Parser = class {
       }
       break;
     }
+    this.currentDescribeName = null;
     return { name, variables, mocks, tests, inlineComment: inlineComment || void 0 };
   }
 };
@@ -1218,6 +1239,21 @@ function getVariableRanges(text) {
   const parser = new Parser(text);
   parser.parseProgram();
   return parser.getVariableRanges();
+}
+function getTestLetVariables(text) {
+  const parser = new Parser(text);
+  parser.parseProgram();
+  return parser.getTestLetVariables();
+}
+function getTestLetVariableRanges(text) {
+  const parser = new Parser(text);
+  parser.parseProgram();
+  const variables = parser.getTestLetVariables();
+  const map = /* @__PURE__ */ new Map();
+  for (const v of variables) {
+    map.set(v.name, { start: v.start, end: v.end });
+  }
+  return map;
 }
 var ParseFailure = class extends Error {
   constructor(message, at) {
@@ -1606,6 +1642,8 @@ export {
   formatTags,
   formatWhen,
   getPipelineRanges,
+  getTestLetVariableRanges,
+  getTestLetVariables,
   getVariableRanges,
   parseProgram,
   parseProgramWithDiagnostics,
