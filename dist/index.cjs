@@ -1057,21 +1057,31 @@ var Parser = class {
     this.skipInlineSpaces();
     this.expect("=");
     this.skipInlineSpaces();
+    let format;
     const value = (() => {
       const bt = this.tryParse(() => this.parseBacktickString());
-      if (bt !== null) return bt;
+      if (bt !== null) {
+        format = "backtick";
+        return bt;
+      }
       const qt = this.tryParse(() => this.parseQuotedString());
-      if (qt !== null) return qt;
+      if (qt !== null) {
+        format = "quoted";
+        return qt;
+      }
       if (this.text.startsWith("null", this.pos)) {
         this.pos += 4;
+        format = "bare";
         return "null";
       }
       if (this.text.startsWith("true", this.pos)) {
         this.pos += 4;
+        format = "bare";
         return "true";
       }
       if (this.text.startsWith("false", this.pos)) {
         this.pos += 5;
+        format = "bare";
         return "false";
       }
       const num = this.tryParse(() => {
@@ -1085,10 +1095,13 @@ var Parser = class {
         }
         return digits;
       });
-      if (num !== null) return num;
+      if (num !== null) {
+        format = "bare";
+        return num;
+      }
       throw new Error("let value");
     })();
-    return [name, value];
+    return [name, value, format];
   }
   parseIt() {
     this.skipSpaces();
@@ -1377,13 +1390,8 @@ function printTest(test) {
   });
   lines.push(`    when ${formatWhen(test.when)}`);
   if (test.variables) {
-    test.variables.forEach(([name, value]) => {
-      const formattedValue = (() => {
-        if (value.startsWith("`") || value.startsWith('"')) return value;
-        if (value === "true" || value === "false" || /^\d+$/.test(value)) return value;
-        if (value.includes("{") || value.includes("[") || value.includes("\n")) return `\`${value}\``;
-        return `"${value}"`;
-      })();
+    test.variables.forEach(([name, value, format]) => {
+      const formattedValue = format === "quoted" ? `"${value}"` : format === "backtick" ? `\`${value}\`` : value;
       lines.push(`    let ${name} = ${formattedValue}`);
     });
   }
@@ -1420,6 +1428,13 @@ function printDescribe(describe) {
     lines.push(`${describeLine} ${printComment(describe.inlineComment)}`);
   } else {
     lines.push(describeLine);
+  }
+  if (describe.variables && describe.variables.length > 0) {
+    describe.variables.forEach(([name, value, format]) => {
+      const formattedValue = format === "quoted" ? `"${value}"` : format === "backtick" ? `\`${value}\`` : value;
+      lines.push(`  let ${name} = ${formattedValue}`);
+    });
+    lines.push("");
   }
   describe.mocks.forEach((mock) => {
     lines.push(printMock(mock));

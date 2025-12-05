@@ -89,6 +89,8 @@ export interface Pipeline {
 
 export type ConfigType = 'backtick' | 'quoted' | 'identifier';
 
+export type LetValueFormat = 'quoted' | 'backtick' | 'bare';
+
 export interface Tag {
   name: string;      // e.g. "prod", "async", "flag"
   negated: boolean;  // true for @!prod
@@ -126,7 +128,7 @@ export type ResultBranchType =
 
 export interface Describe {
   name: string;
-  variables: Array<[string, string]>;
+  variables: Array<[string, string, LetValueFormat]>;
   mocks: Mock[];
   tests: It[];
   lineNumber?: number;
@@ -142,7 +144,7 @@ export interface It {
   name: string;
   mocks: Mock[];
   when: When;
-  variables?: Array<[string, string]>;
+  variables?: Array<[string, string, LetValueFormat]>;
   input?: string;
   body?: string;
   headers?: string;
@@ -1400,7 +1402,7 @@ class Parser {
     return this.parseMockHead('and');
   }
 
-  private parseLetBinding(): [string, string] {
+  private parseLetBinding(): [string, string, LetValueFormat] {
     this.expect('let');
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -1409,28 +1411,38 @@ class Parser {
     this.skipInlineSpaces();
 
     // Parse value: supports backtick strings, quoted strings, numbers (int/float), booleans, and null
+    let format: LetValueFormat;
     const value = (() => {
       // Try backtick string
       const bt = this.tryParse(() => this.parseBacktickString());
-      if (bt !== null) return bt;
+      if (bt !== null) {
+        format = 'backtick';
+        return bt;
+      }
 
       // Try quoted string
       const qt = this.tryParse(() => this.parseQuotedString());
-      if (qt !== null) return qt;
+      if (qt !== null) {
+        format = 'quoted';
+        return qt;
+      }
 
       // Try null
       if (this.text.startsWith('null', this.pos)) {
         this.pos += 4;
+        format = 'bare';
         return 'null';
       }
 
       // Try boolean
       if (this.text.startsWith('true', this.pos)) {
         this.pos += 4;
+        format = 'bare';
         return 'true';
       }
       if (this.text.startsWith('false', this.pos)) {
         this.pos += 5;
+        format = 'bare';
         return 'false';
       }
 
@@ -1449,12 +1461,15 @@ class Parser {
 
         return digits;
       });
-      if (num !== null) return num;
+      if (num !== null) {
+        format = 'bare';
+        return num;
+      }
 
       throw new Error('let value');
     })();
 
-    return [name, value];
+    return [name, value, format];
   }
 
   private parseIt(): It {
@@ -1474,7 +1489,7 @@ class Parser {
     }
 
     // Parse optional let bindings (before when clause)
-    const variables: Array<[string, string]> = [];
+    const variables: Array<[string, string, LetValueFormat]> = [];
     while (true) {
       const letBinding = this.tryParse(() => {
         const binding = this.parseLetBinding();
@@ -1595,7 +1610,7 @@ class Parser {
     this.skipSpaces();
 
     // Parse let bindings, mocks, and tests in any order
-    const variables: Array<[string, string]> = [];
+    const variables: Array<[string, string, LetValueFormat]> = [];
     const mocks: Mock[] = [];
     const tests: It[] = [];
 
@@ -1804,18 +1819,13 @@ export function printTest(test: It): string {
 
   // Print let bindings before with clauses
   if (test.variables) {
-    test.variables.forEach(([name, value]) => {
-      // Format the value based on its type
-      const formattedValue = (() => {
-        // If it's already wrapped, keep it
-        if (value.startsWith('`') || value.startsWith('"')) return value;
-        // If it's a boolean or number, leave it bare
-        if (value === 'true' || value === 'false' || /^\d+$/.test(value)) return value;
-        // If it contains JSON-like content, wrap in backticks
-        if (value.includes('{') || value.includes('[') || value.includes('\n')) return `\`${value}\``;
-        // Otherwise wrap in quotes
-        return `"${value}"`;
-      })();
+    test.variables.forEach(([name, value, format]) => {
+      // Format the value based on stored format
+      const formattedValue = format === 'quoted'
+        ? `"${value}"`
+        : format === 'backtick'
+        ? `\`${value}\``
+        : value;
       lines.push(`    let ${name} = ${formattedValue}`);
     });
   }
@@ -1858,18 +1868,32 @@ export function printDescribe(describe: Describe): string {
   } else {
     lines.push(describeLine);
   }
+
+  // Print describe-level let bindings
+  if (describe.variables && describe.variables.length > 0) {
+    describe.variables.forEach(([name, value, format]) => {
+      const formattedValue = format === 'quoted'
+        ? `"${value}"`
+        : format === 'backtick'
+        ? `\`${value}\``
+        : value;
+      lines.push(`  let ${name} = ${formattedValue}`);
+    });
+    lines.push('');
+  }
+
   describe.mocks.forEach(mock => {
     lines.push(printMock(mock));
   });
   if (describe.mocks.length > 0) {
     lines.push('');
   }
-  
+
   describe.tests.forEach(test => {
     lines.push(printTest(test));
     lines.push('');
   });
-  
+
   return lines.join('\n').replace(/\n\n$/, '\n');
 }
 
