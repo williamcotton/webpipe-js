@@ -1007,6 +1007,7 @@ var Parser = class {
     return this.parseMockHead("and");
   }
   parseLetBinding() {
+    const fullStart = this.pos;
     this.expect("let");
     this.skipInlineSpaces();
     const nameStart = this.pos;
@@ -1068,9 +1069,19 @@ var Parser = class {
       }
       throw new Error("let value");
     })();
-    return [name, value, format];
+    const fullEnd = this.pos;
+    return {
+      name,
+      value,
+      format,
+      start: nameStart,
+      end: nameEnd,
+      fullStart,
+      fullEnd
+    };
   }
   parseIt() {
+    const start = this.pos;
     this.skipSpaces();
     this.expect("it");
     this.skipInlineSpaces();
@@ -1168,6 +1179,7 @@ var Parser = class {
       conditions.push(c);
     }
     this.currentTestName = null;
+    const end = this.pos;
     return {
       name,
       mocks: [...mocks, ...extraMocks],
@@ -1177,10 +1189,13 @@ var Parser = class {
       body,
       headers,
       cookies,
-      conditions
+      conditions,
+      start,
+      end
     };
   }
   parseDescribe() {
+    const start = this.pos;
     this.skipSpaces();
     this.expect("describe");
     this.skipInlineSpaces();
@@ -1218,7 +1233,8 @@ var Parser = class {
       break;
     }
     this.currentDescribeName = null;
-    return { name, variables, mocks, tests, inlineComment: inlineComment || void 0 };
+    const end = this.pos;
+    return { name, variables, mocks, tests, inlineComment: inlineComment || void 0, start, end };
   }
 };
 function parseProgram(text) {
@@ -1376,9 +1392,9 @@ function printTest(test) {
   });
   lines.push(`    when ${formatWhen(test.when)}`);
   if (test.variables) {
-    test.variables.forEach(([name, value, format]) => {
-      const formattedValue = format === "quoted" ? `"${value}"` : format === "backtick" ? `\`${value}\`` : value;
-      lines.push(`    let ${name} = ${formattedValue}`);
+    test.variables.forEach((variable) => {
+      const formattedValue = variable.format === "quoted" ? `"${variable.value}"` : variable.format === "backtick" ? `\`${variable.value}\`` : variable.value;
+      lines.push(`    let ${variable.name} = ${formattedValue}`);
     });
   }
   if (test.input) {
@@ -1416,9 +1432,9 @@ function printDescribe(describe) {
     lines.push(describeLine);
   }
   if (describe.variables && describe.variables.length > 0) {
-    describe.variables.forEach(([name, value, format]) => {
-      const formattedValue = format === "quoted" ? `"${value}"` : format === "backtick" ? `\`${value}\`` : value;
-      lines.push(`  let ${name} = ${formattedValue}`);
+    describe.variables.forEach((variable) => {
+      const formattedValue = variable.format === "quoted" ? `"${variable.value}"` : variable.format === "backtick" ? `\`${variable.value}\`` : variable.value;
+      lines.push(`  let ${variable.name} = ${formattedValue}`);
     });
     lines.push("");
   }
