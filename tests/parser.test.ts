@@ -8,6 +8,22 @@ function loadFixture(name: string): string {
   return readFileSync(file, 'utf8');
 }
 
+// Helper to strip position data from AST nodes for comparison
+function stripPositions(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(stripPositions);
+
+  const result: any = {};
+  for (const key in obj) {
+    if (key === 'start' || key === 'end' || key === 'fullStart' || key === 'fullEnd') {
+      continue; // Skip position properties
+    }
+    result[key] = stripPositions(obj[key]);
+  }
+  return result;
+}
+
 describe('parseProgram - comprehensive_test.wp', () => {
   let program: Program;
 
@@ -261,7 +277,10 @@ describe('parseProgram - tags support', () => {
     const formatted = prettyPrint(program1);
     const program2 = parseProgram(formatted);
 
-    expect(program1.pipelines[0].pipeline.steps).toEqual(program2.pipelines[0].pipeline.steps);
+    // Compare without position data since formatting changes whitespace/positions
+    expect(stripPositions(program1.pipelines[0].pipeline.steps)).toEqual(
+      stripPositions(program2.pipelines[0].pipeline.steps)
+    );
   });
 
   it('formats tags correctly', () => {
@@ -773,7 +792,8 @@ describe "Let Test"
     const program = parseProgram(src);
     const t = program.describes[0].tests[0];
     expect(t.variables).toHaveLength(1);
-    expect(t.variables![0]).toEqual(['x', '1']);
+    expect(t.variables![0].name).toBe('x');
+    expect(t.variables![0].value).toBe('1');
   });
 });
 
