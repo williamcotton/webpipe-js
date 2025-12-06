@@ -358,6 +358,7 @@ var Parser = class {
     throw new ParseFailure("step-config", this.pos);
   }
   parseTag() {
+    const start = this.pos;
     this.expect("@");
     const negated = this.cur() === "!";
     if (negated) this.pos++;
@@ -366,7 +367,8 @@ var Parser = class {
     if (this.cur() === "(") {
       args = this.parseTagArgs();
     }
-    return { name, negated, args };
+    const end = this.pos;
+    return { name, negated, args, start, end };
   }
   parseTagArgs() {
     this.expect("(");
@@ -441,14 +443,17 @@ var Parser = class {
   }
   parseConfigProperty() {
     this.skipSpaces();
+    const start = this.pos;
     const key = this.parseIdentifier();
     this.skipInlineSpaces();
     this.expect(":");
     this.skipInlineSpaces();
     const value = this.parseConfigValue();
-    return { key, value };
+    const end = this.pos;
+    return { key, value, start, end };
   }
   parseConfig() {
+    const start = this.pos;
     this.expect("config");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -466,7 +471,8 @@ var Parser = class {
     this.skipSpaces();
     this.expect("}");
     this.skipWhitespaceOnly();
-    return { name, properties, inlineComment: inlineComment || void 0 };
+    const end = this.pos;
+    return { name, properties, inlineComment: inlineComment || void 0, start, end };
   }
   parsePipelineStep() {
     const result = this.tryParse(() => this.parseResultStep());
@@ -481,6 +487,7 @@ var Parser = class {
   }
   parseForeachStep() {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect("|>");
     this.skipInlineSpaces();
     this.expect("foreach");
@@ -496,10 +503,12 @@ var Parser = class {
     const pipeline = this.parseIfPipeline("end");
     this.skipSpaces();
     this.expect("end");
-    return { kind: "Foreach", selector, pipeline };
+    const end = this.pos;
+    return { kind: "Foreach", selector, pipeline, start, end };
   }
   parseRegularStep() {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect("|>");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -509,7 +518,8 @@ var Parser = class {
     const condition = this.parseStepCondition();
     const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
-    return { kind: "Regular", name, config, configType, condition, parsedJoinTargets };
+    const end = this.pos;
+    return { kind: "Regular", name, config, configType, condition, parsedJoinTargets, start, end };
   }
   /**
    * Parse optional step condition (tag expression after the config)
@@ -565,6 +575,7 @@ var Parser = class {
   }
   parseResultStep() {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect("|>");
     this.skipInlineSpaces();
     this.expect("result");
@@ -575,10 +586,12 @@ var Parser = class {
       if (!br) break;
       branches.push(br);
     }
-    return { kind: "Result", branches };
+    const end = this.pos;
+    return { kind: "Result", branches, start, end };
   }
   parseResultBranch() {
     this.skipSpaces();
+    const start = this.pos;
     const branchIdent = this.parseIdentifier();
     let branchType;
     if (branchIdent === "ok") branchType = { kind: "Ok" };
@@ -598,10 +611,12 @@ var Parser = class {
     this.expect(":");
     this.skipSpaces();
     const pipeline = this.parsePipeline();
-    return { branchType, statusCode, pipeline };
+    const end = this.pos;
+    return { branchType, statusCode, pipeline, start, end };
   }
   parseIfStep() {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect("|>");
     this.skipInlineSpaces();
     this.expect("if");
@@ -622,10 +637,12 @@ var Parser = class {
       this.expect("end");
       return true;
     });
-    return { kind: "If", condition, thenBranch, elseBranch: elseBranch || void 0 };
+    const end = this.pos;
+    return { kind: "If", condition, thenBranch, elseBranch: elseBranch || void 0, start, end };
   }
   parseDispatchStep() {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect("|>");
     this.skipInlineSpaces();
     this.expect("dispatch");
@@ -647,10 +664,12 @@ var Parser = class {
       this.expect("end");
       return true;
     });
-    return { kind: "Dispatch", branches, default: defaultBranch || void 0 };
+    const end = this.pos;
+    return { kind: "Dispatch", branches, default: defaultBranch || void 0, start, end };
   }
   parseDispatchBranch() {
     this.skipSpaces();
+    const start = this.pos;
     this.expect("case");
     this.skipInlineSpaces();
     const condition = this.parseTagExpr();
@@ -658,7 +677,8 @@ var Parser = class {
     this.expect(":");
     this.skipSpaces();
     const pipeline = this.parseIfPipeline("case", "default:", "end");
-    return { condition, pipeline };
+    const end = this.pos;
+    return { condition, pipeline, start, end };
   }
   /**
    * Parse a tag expression with boolean operators (and, or) and grouping
@@ -718,6 +738,7 @@ var Parser = class {
     return { kind: "Tag", tag };
   }
   parseIfPipeline(...stopKeywords) {
+    const start = this.pos;
     const steps = [];
     while (true) {
       const save = this.pos;
@@ -725,7 +746,8 @@ var Parser = class {
       for (const keyword of stopKeywords) {
         if (this.text.startsWith(keyword, this.pos)) {
           this.pos = save;
-          return { steps };
+          const end2 = this.pos;
+          return { steps, start, end: end2 };
         }
       }
       if (!this.text.startsWith("|>", this.pos)) {
@@ -735,9 +757,11 @@ var Parser = class {
       const step = this.parsePipelineStep();
       steps.push(step);
     }
-    return { steps };
+    const end = this.pos;
+    return { steps, start, end };
   }
   parsePipeline() {
+    const start = this.pos;
     const steps = [];
     while (true) {
       const save = this.pos;
@@ -749,7 +773,8 @@ var Parser = class {
       const step = this.parsePipelineStep();
       steps.push(step);
     }
-    return { steps };
+    const end = this.pos;
+    return { steps, start, end };
   }
   parseNamedPipeline() {
     const start = this.pos;
@@ -760,24 +785,27 @@ var Parser = class {
     this.expect("=");
     const inlineComment = this.parseInlineComment();
     this.skipInlineSpaces();
-    const beforePipeline = this.pos;
     const pipeline = this.parsePipeline();
     const end = this.pos;
     this.pipelineRanges.set(name, { start, end });
     this.skipWhitespaceOnly();
-    return { name, pipeline, inlineComment: inlineComment || void 0 };
+    return { name, pipeline, inlineComment: inlineComment || void 0, start, end };
   }
   parsePipelineRef() {
     const inline = this.tryParse(() => this.parsePipeline());
-    if (inline && inline.steps.length > 0) return { kind: "Inline", pipeline: inline };
+    if (inline && inline.steps.length > 0) {
+      return { kind: "Inline", pipeline: inline, start: inline.start, end: inline.end };
+    }
     const named = this.tryParse(() => {
       this.skipWhitespaceOnly();
+      const start = this.pos;
       this.expect("|>");
       this.skipInlineSpaces();
       this.expect("pipeline:");
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: "Named", name };
+      const end = this.pos;
+      return { kind: "Named", name, start, end };
     });
     if (named) return named;
     throw new Error("pipeline-ref");
@@ -795,19 +823,22 @@ var Parser = class {
     const end = this.pos;
     this.variableRanges.set(`${varType}::${name}`, { start, end });
     this.skipWhitespaceOnly();
-    return { varType, name, value, inlineComment: inlineComment || void 0 };
+    return { varType, name, value, inlineComment: inlineComment || void 0, start, end };
   }
   parseGraphQLSchema() {
+    const start = this.pos;
     this.expect("graphqlSchema");
     this.skipInlineSpaces();
     this.expect("=");
     const inlineComment = this.parseInlineComment();
     this.skipInlineSpaces();
     const sdl = this.parseBacktickString();
+    const end = this.pos;
     this.skipWhitespaceOnly();
-    return { sdl, inlineComment: inlineComment || void 0 };
+    return { sdl, inlineComment: inlineComment || void 0, start, end };
   }
   parseQueryResolver() {
+    const start = this.pos;
     this.expect("query");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -816,10 +847,12 @@ var Parser = class {
     const inlineComment = this.parseInlineComment();
     this.skipWhitespaceOnly();
     const pipeline = this.parsePipeline();
+    const end = this.pos;
     this.skipWhitespaceOnly();
-    return { name, pipeline, inlineComment: inlineComment || void 0 };
+    return { name, pipeline, inlineComment: inlineComment || void 0, start, end };
   }
   parseMutationResolver() {
+    const start = this.pos;
     this.expect("mutation");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -828,8 +861,9 @@ var Parser = class {
     const inlineComment = this.parseInlineComment();
     this.skipWhitespaceOnly();
     const pipeline = this.parsePipeline();
+    const end = this.pos;
     this.skipWhitespaceOnly();
-    return { name, pipeline, inlineComment: inlineComment || void 0 };
+    return { name, pipeline, inlineComment: inlineComment || void 0, start, end };
   }
   parseFeatureFlags() {
     this.expect("featureFlags");
@@ -841,35 +875,42 @@ var Parser = class {
     return pipeline;
   }
   parseRoute() {
+    const start = this.pos;
     const method = this.parseMethod();
     this.skipInlineSpaces();
     const path = this.consumeWhile((c) => c !== " " && c !== "\n" && c !== "#");
     const inlineComment = this.parseInlineComment();
     this.skipSpaces();
     const pipeline = this.parsePipelineRef();
+    const end = this.pos;
     this.skipWhitespaceOnly();
-    return { method, path, pipeline, inlineComment: inlineComment || void 0 };
+    return { method, path, pipeline, inlineComment: inlineComment || void 0, start, end };
   }
   parseWhen() {
     const calling = this.tryParse(() => {
+      const start = this.pos;
       this.expect("calling");
       this.skipInlineSpaces();
       const method = this.parseMethod();
       this.skipInlineSpaces();
       const path = this.consumeWhile((c) => c !== "\n");
-      return { kind: "CallingRoute", method, path };
+      const end = this.pos;
+      return { kind: "CallingRoute", method, path, start, end };
     });
     if (calling) return calling;
     const executingPipeline = this.tryParse(() => {
+      const start = this.pos;
       this.expect("executing");
       this.skipInlineSpaces();
       this.expect("pipeline");
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: "ExecutingPipeline", name };
+      const end = this.pos;
+      return { kind: "ExecutingPipeline", name, start, end };
     });
     if (executingPipeline) return executingPipeline;
     const executingVariable = this.tryParse(() => {
+      const start = this.pos;
       this.expect("executing");
       this.skipInlineSpaces();
       this.expect("variable");
@@ -877,13 +918,15 @@ var Parser = class {
       const varType = this.parseIdentifier();
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: "ExecutingVariable", varType, name };
+      const end = this.pos;
+      return { kind: "ExecutingVariable", varType, name, start, end };
     });
     if (executingVariable) return executingVariable;
     throw new ParseFailure("when", this.pos);
   }
   parseCondition() {
     this.skipSpaces();
+    const start = this.pos;
     const ct = (() => {
       if (this.match("then")) return "Then";
       if (this.match("and")) return "And";
@@ -916,13 +959,16 @@ var Parser = class {
         if (v2 !== null) return v2;
         return this.consumeWhile((c) => c !== "\n");
       })();
+      const end2 = this.pos;
       return {
         conditionType: ct,
         field: "call",
         comparison: comparison2,
         value: value2,
         isCallAssertion: true,
-        callTarget
+        callTarget,
+        start,
+        end: end2
       };
     }
     if (field === "selector") {
@@ -995,13 +1041,16 @@ var Parser = class {
       } else {
         throw new Error(`Unknown selector operation: ${operation}`);
       }
+      const end2 = this.pos;
       return {
         conditionType: ct,
         field: "selector",
         comparison: comparison2,
         value: value2,
         selector: selectorStr,
-        domAssert
+        domAssert,
+        start,
+        end: end2
       };
     }
     let headerName;
@@ -1028,10 +1077,12 @@ var Parser = class {
       if (v2 !== null) return v2;
       return this.consumeWhile((c) => c !== "\n");
     })();
-    return { conditionType: ct, field, headerName: headerName ?? void 0, jqExpr: jqExpr ?? void 0, comparison, value };
+    const end = this.pos;
+    return { conditionType: ct, field, headerName: headerName ?? void 0, jqExpr: jqExpr ?? void 0, comparison, value, start, end };
   }
   parseMockHead(prefixWord) {
     this.skipSpaces();
+    const start = this.pos;
     this.expect(prefixWord);
     this.skipInlineSpaces();
     this.expect("mock");
@@ -1050,7 +1101,8 @@ var Parser = class {
     this.skipInlineSpaces();
     const returnValue = this.parseBacktickString();
     this.skipSpaces();
-    return { target, returnValue };
+    const end = this.pos;
+    return { target, returnValue, start, end };
   }
   parseMock() {
     return this.parseMockHead("with");

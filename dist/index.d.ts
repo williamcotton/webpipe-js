@@ -21,10 +21,14 @@ interface Config {
     properties: ConfigProperty[];
     lineNumber?: number;
     inlineComment?: Comment;
+    start: number;
+    end: number;
 }
 interface ConfigProperty {
     key: string;
     value: ConfigValue;
+    start: number;
+    end: number;
 }
 type ConfigValue = {
     kind: 'String';
@@ -45,6 +49,8 @@ interface NamedPipeline {
     pipeline: Pipeline;
     lineNumber?: number;
     inlineComment?: Comment;
+    start: number;
+    end: number;
 }
 interface Variable {
     varType: string;
@@ -52,23 +58,31 @@ interface Variable {
     value: string;
     lineNumber?: number;
     inlineComment?: Comment;
+    start: number;
+    end: number;
 }
 interface GraphQLSchema {
     sdl: string;
     lineNumber?: number;
     inlineComment?: Comment;
+    start: number;
+    end: number;
 }
 interface QueryResolver {
     name: string;
     pipeline: Pipeline;
     lineNumber?: number;
     inlineComment?: Comment;
+    start: number;
+    end: number;
 }
 interface MutationResolver {
     name: string;
     pipeline: Pipeline;
     lineNumber?: number;
     inlineComment?: Comment;
+    start: number;
+    end: number;
 }
 interface Route {
     method: string;
@@ -76,16 +90,24 @@ interface Route {
     pipeline: PipelineRef;
     lineNumber?: number;
     inlineComment?: Comment;
+    start: number;
+    end: number;
 }
 type PipelineRef = {
     kind: 'Inline';
     pipeline: Pipeline;
+    start: number;
+    end: number;
 } | {
     kind: 'Named';
     name: string;
+    start: number;
+    end: number;
 };
 interface Pipeline {
     steps: PipelineStep[];
+    start: number;
+    end: number;
 }
 type ConfigType = 'backtick' | 'quoted' | 'identifier';
 type LetValueFormat = 'quoted' | 'backtick' | 'bare';
@@ -102,6 +124,8 @@ interface Tag {
     name: string;
     negated: boolean;
     args: string[];
+    start: number;
+    end: number;
 }
 /** A boolean expression of tags for dispatch routing */
 type TagExpr = {
@@ -123,31 +147,45 @@ type PipelineStep = {
     configType: ConfigType;
     condition?: TagExpr;
     parsedJoinTargets?: string[];
+    start: number;
+    end: number;
 } | {
     kind: 'Result';
     branches: ResultBranch[];
+    start: number;
+    end: number;
 } | {
     kind: 'If';
     condition: Pipeline;
     thenBranch: Pipeline;
     elseBranch?: Pipeline;
+    start: number;
+    end: number;
 } | {
     kind: 'Dispatch';
     branches: DispatchBranch[];
     default?: Pipeline;
+    start: number;
+    end: number;
 } | {
     kind: 'Foreach';
     selector: string;
     pipeline: Pipeline;
+    start: number;
+    end: number;
 };
 interface DispatchBranch {
     condition: TagExpr;
     pipeline: Pipeline;
+    start: number;
+    end: number;
 }
 interface ResultBranch {
     branchType: ResultBranchType;
     statusCode: number;
     pipeline: Pipeline;
+    start: number;
+    end: number;
 }
 type ResultBranchType = {
     kind: 'Ok';
@@ -170,6 +208,8 @@ interface Describe {
 interface Mock {
     target: string;
     returnValue: string;
+    start: number;
+    end: number;
 }
 interface It {
     name: string;
@@ -188,13 +228,19 @@ type When = {
     kind: 'CallingRoute';
     method: string;
     path: string;
+    start: number;
+    end: number;
 } | {
     kind: 'ExecutingPipeline';
     name: string;
+    start: number;
+    end: number;
 } | {
     kind: 'ExecutingVariable';
     varType: string;
     name: string;
+    start: number;
+    end: number;
 };
 type DomAssertType = {
     kind: 'Exists';
@@ -217,6 +263,8 @@ interface Condition {
     callTarget?: string;
     selector?: string;
     domAssert?: DomAssertType;
+    start: number;
+    end: number;
 }
 type DiagnosticSeverity = 'error' | 'warning' | 'info';
 interface ParseDiagnostic {

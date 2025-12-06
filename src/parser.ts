@@ -23,11 +23,15 @@ export interface Config {
   properties: ConfigProperty[];
   lineNumber?: number;
   inlineComment?: Comment;
+  start: number;
+  end: number;
 }
 
 export interface ConfigProperty {
   key: string;
   value: ConfigValue;
+  start: number;
+  end: number;
 }
 
 export type ConfigValue =
@@ -41,6 +45,8 @@ export interface NamedPipeline {
   pipeline: Pipeline;
   lineNumber?: number;
   inlineComment?: Comment;
+  start: number;
+  end: number;
 }
 
 export interface Variable {
@@ -49,12 +55,16 @@ export interface Variable {
   value: string;
   lineNumber?: number;
   inlineComment?: Comment;
+  start: number;
+  end: number;
 }
 
 export interface GraphQLSchema {
   sdl: string;
   lineNumber?: number;
   inlineComment?: Comment;
+  start: number;
+  end: number;
 }
 
 export interface QueryResolver {
@@ -62,6 +72,8 @@ export interface QueryResolver {
   pipeline: Pipeline;
   lineNumber?: number;
   inlineComment?: Comment;
+  start: number;
+  end: number;
 }
 
 export interface MutationResolver {
@@ -69,6 +81,8 @@ export interface MutationResolver {
   pipeline: Pipeline;
   lineNumber?: number;
   inlineComment?: Comment;
+  start: number;
+  end: number;
 }
 
 export interface Route {
@@ -77,14 +91,18 @@ export interface Route {
   pipeline: PipelineRef;
   lineNumber?: number;
   inlineComment?: Comment;
+  start: number;
+  end: number;
 }
 
 export type PipelineRef =
-  | { kind: 'Inline'; pipeline: Pipeline }
-  | { kind: 'Named'; name: string };
+  | { kind: 'Inline'; pipeline: Pipeline; start: number; end: number }
+  | { kind: 'Named'; name: string; start: number; end: number };
 
 export interface Pipeline {
   steps: PipelineStep[];
+  start: number;
+  end: number;
 }
 
 export type ConfigType = 'backtick' | 'quoted' | 'identifier';
@@ -105,6 +123,8 @@ export interface Tag {
   name: string;      // e.g. "prod", "async", "flag"
   negated: boolean;  // true for @!prod
   args: string[];    // ["new-ui", "beta"] for @flag(new-ui,beta)
+  start: number;
+  end: number;
 }
 
 /** A boolean expression of tags for dispatch routing */
@@ -114,21 +134,25 @@ export type TagExpr =
   | { kind: 'Or'; left: TagExpr; right: TagExpr };
 
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; config: string; configType: ConfigType; condition?: TagExpr; parsedJoinTargets?: string[] }
-  | { kind: 'Result'; branches: ResultBranch[] }
-  | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline }
-  | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline }
-  | { kind: 'Foreach'; selector: string; pipeline: Pipeline };
+  | { kind: 'Regular'; name: string; config: string; configType: ConfigType; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
+  | { kind: 'Result'; branches: ResultBranch[]; start: number; end: number }
+  | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline; start: number; end: number }
+  | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline; start: number; end: number }
+  | { kind: 'Foreach'; selector: string; pipeline: Pipeline; start: number; end: number };
 
 export interface DispatchBranch {
   condition: TagExpr;
   pipeline: Pipeline;
+  start: number;
+  end: number;
 }
 
 export interface ResultBranch {
   branchType: ResultBranchType;
   statusCode: number;
   pipeline: Pipeline;
+  start: number;
+  end: number;
 }
 
 export type ResultBranchType =
@@ -150,6 +174,8 @@ export interface Describe {
 export interface Mock {
   target: string;
   returnValue: string;
+  start: number;
+  end: number;
 }
 
 export interface It {
@@ -167,9 +193,9 @@ export interface It {
 }
 
 export type When =
-  | { kind: 'CallingRoute'; method: string; path: string }
-  | { kind: 'ExecutingPipeline'; name: string }
-  | { kind: 'ExecutingVariable'; varType: string; name: string };
+  | { kind: 'CallingRoute'; method: string; path: string; start: number; end: number }
+  | { kind: 'ExecutingPipeline'; name: string; start: number; end: number }
+  | { kind: 'ExecutingVariable'; varType: string; name: string; start: number; end: number };
 
 export type DomAssertType =
   | { kind: 'Exists' }
@@ -188,6 +214,8 @@ export interface Condition {
   callTarget?: string;
   selector?: string;
   domAssert?: DomAssertType;
+  start: number;
+  end: number;
 }
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
@@ -562,6 +590,7 @@ class Parser {
 
   private parseTag(): Tag {
     // Current position should be at '@'
+    const start = this.pos;
     this.expect('@');
 
     // Check for negation
@@ -577,7 +606,8 @@ class Parser {
       args = this.parseTagArgs();
     }
 
-    return { name, negated, args };
+    const end = this.pos;
+    return { name, negated, args, start, end };
   }
 
   private parseTagArgs(): string[] {
@@ -683,15 +713,18 @@ class Parser {
 
   private parseConfigProperty(): ConfigProperty {
     this.skipSpaces();
+    const start = this.pos;
     const key = this.parseIdentifier();
     this.skipInlineSpaces();
     this.expect(':');
     this.skipInlineSpaces();
     const value = this.parseConfigValue();
-    return { key, value };
+    const end = this.pos;
+    return { key, value, start, end };
   }
 
   private parseConfig(): Config {
+    const start = this.pos;
     this.expect('config');
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -709,7 +742,8 @@ class Parser {
     this.skipSpaces();
     this.expect('}');
     this.skipWhitespaceOnly();
-    return { name, properties, inlineComment: inlineComment || undefined };
+    const end = this.pos;
+    return { name, properties, inlineComment: inlineComment || undefined, start, end };
   }
 
   private parsePipelineStep(): PipelineStep {
@@ -726,10 +760,11 @@ class Parser {
 
   private parseForeachStep(): PipelineStep {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect('|>');
     this.skipInlineSpaces();
     this.expect('foreach');
-    
+
     // Must have at least one space after 'foreach'
     if (this.cur() !== ' ' && this.cur() !== '\t') {
       throw new ParseFailure('space after foreach', this.pos);
@@ -750,11 +785,13 @@ class Parser {
     // Expect 'end' keyword
     this.expect('end');
 
-    return { kind: 'Foreach', selector, pipeline };
+    const end = this.pos;
+    return { kind: 'Foreach', selector, pipeline, start, end };
   }
 
   private parseRegularStep(): PipelineStep {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect('|>');
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -769,7 +806,8 @@ class Parser {
     const parsedJoinTargets = name === 'join' ? this.parseJoinTaskNames(config) : undefined;
 
     this.skipWhitespaceOnly();
-    return { kind: 'Regular', name, config, configType, condition, parsedJoinTargets };
+    const end = this.pos;
+    return { kind: 'Regular', name, config, configType, condition, parsedJoinTargets, start, end };
   }
 
   /**
@@ -851,6 +889,7 @@ class Parser {
 
   private parseResultStep(): PipelineStep {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect('|>');
     this.skipInlineSpaces();
     this.expect('result');
@@ -861,11 +900,13 @@ class Parser {
       if (!br) break;
       branches.push(br);
     }
-    return { kind: 'Result', branches };
+    const end = this.pos;
+    return { kind: 'Result', branches, start, end };
   }
 
   private parseResultBranch(): ResultBranch {
     this.skipSpaces();
+    const start = this.pos;
     const branchIdent = this.parseIdentifier();
     let branchType: ResultBranchType;
     if (branchIdent === 'ok') branchType = { kind: 'Ok' };
@@ -883,11 +924,13 @@ class Parser {
     this.expect(':');
     this.skipSpaces();
     const pipeline = this.parsePipeline();
-    return { branchType, statusCode, pipeline };
+    const end = this.pos;
+    return { branchType, statusCode, pipeline, start, end };
   }
 
   private parseIfStep(): PipelineStep {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect('|>');
     this.skipInlineSpaces();
     this.expect('if');
@@ -920,11 +963,13 @@ class Parser {
       return true;
     });
 
-    return { kind: 'If', condition, thenBranch, elseBranch: elseBranch || undefined };
+    const end = this.pos;
+    return { kind: 'If', condition, thenBranch, elseBranch: elseBranch || undefined, start, end };
   }
 
   private parseDispatchStep(): PipelineStep {
     this.skipWhitespaceOnly();
+    const start = this.pos;
     this.expect('|>');
     this.skipInlineSpaces();
     this.expect('dispatch');
@@ -954,11 +999,13 @@ class Parser {
       return true;
     });
 
-    return { kind: 'Dispatch', branches, default: defaultBranch || undefined };
+    const end = this.pos;
+    return { kind: 'Dispatch', branches, default: defaultBranch || undefined, start, end };
   }
 
   private parseDispatchBranch(): DispatchBranch {
     this.skipSpaces();
+    const start = this.pos;
     this.expect('case');
     this.skipInlineSpaces();
     const condition = this.parseTagExpr();
@@ -967,7 +1014,8 @@ class Parser {
     this.skipSpaces();
     // Parse pipeline (stops when it sees 'case', 'default', 'end', or non-pipeline content)
     const pipeline = this.parseIfPipeline('case', 'default:', 'end');
-    return { condition, pipeline };
+    const end = this.pos;
+    return { condition, pipeline, start, end };
   }
 
   /**
@@ -1039,6 +1087,7 @@ class Parser {
   }
 
   private parseIfPipeline(...stopKeywords: string[]): Pipeline {
+    const start = this.pos;
     const steps: PipelineStep[] = [];
     while (true) {
       const save = this.pos;
@@ -1048,7 +1097,8 @@ class Parser {
       for (const keyword of stopKeywords) {
         if (this.text.startsWith(keyword, this.pos)) {
           this.pos = save;
-          return { steps };
+          const end = this.pos;
+          return { steps, start, end };
         }
       }
 
@@ -1061,10 +1111,12 @@ class Parser {
       const step = this.parsePipelineStep();
       steps.push(step);
     }
-    return { steps };
+    const end = this.pos;
+    return { steps, start, end };
   }
 
   private parsePipeline(): Pipeline {
+    const start = this.pos;
     const steps: PipelineStep[] = [];
     while (true) {
       const save = this.pos;
@@ -1076,7 +1128,8 @@ class Parser {
       const step = this.parsePipelineStep();
       steps.push(step);
     }
-    return { steps };
+    const end = this.pos;
+    return { steps, start, end };
   }
 
   private parseNamedPipeline(): NamedPipeline {
@@ -1088,26 +1141,29 @@ class Parser {
     this.expect('=');
     const inlineComment = this.parseInlineComment();
     this.skipInlineSpaces();
-    const beforePipeline = this.pos;
     const pipeline = this.parsePipeline();
     const end = this.pos;
     this.pipelineRanges.set(name, { start, end });
     this.skipWhitespaceOnly();
-    return { name, pipeline, inlineComment: inlineComment || undefined };
+    return { name, pipeline, inlineComment: inlineComment || undefined, start, end };
   }
 
   private parsePipelineRef(): PipelineRef {
     const inline = this.tryParse(() => this.parsePipeline());
-    if (inline && inline.steps.length > 0) return { kind: 'Inline', pipeline: inline };
+    if (inline && inline.steps.length > 0) {
+      return { kind: 'Inline', pipeline: inline, start: inline.start, end: inline.end };
+    }
 
     const named = this.tryParse(() => {
       this.skipWhitespaceOnly();
+      const start = this.pos;
       this.expect('|>');
       this.skipInlineSpaces();
       this.expect('pipeline:');
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: 'Named', name } as PipelineRef;
+      const end = this.pos;
+      return { kind: 'Named', name, start, end } as PipelineRef;
     });
     if (named) return named;
     throw new Error('pipeline-ref');
@@ -1126,21 +1182,24 @@ class Parser {
     const end = this.pos;
     this.variableRanges.set(`${varType}::${name}`, { start, end });
     this.skipWhitespaceOnly();
-    return { varType, name, value, inlineComment: inlineComment || undefined };
+    return { varType, name, value, inlineComment: inlineComment || undefined, start, end };
   }
 
   private parseGraphQLSchema(): GraphQLSchema {
+    const start = this.pos;
     this.expect('graphqlSchema');
     this.skipInlineSpaces();
     this.expect('=');
     const inlineComment = this.parseInlineComment();
     this.skipInlineSpaces();
     const sdl = this.parseBacktickString();
+    const end = this.pos;
     this.skipWhitespaceOnly();
-    return { sdl, inlineComment: inlineComment || undefined };
+    return { sdl, inlineComment: inlineComment || undefined, start, end };
   }
 
   private parseQueryResolver(): QueryResolver {
+    const start = this.pos;
     this.expect('query');
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -1149,11 +1208,13 @@ class Parser {
     const inlineComment = this.parseInlineComment();
     this.skipWhitespaceOnly();
     const pipeline = this.parsePipeline();
+    const end = this.pos;
     this.skipWhitespaceOnly();
-    return { name, pipeline, inlineComment: inlineComment || undefined };
+    return { name, pipeline, inlineComment: inlineComment || undefined, start, end };
   }
 
   private parseMutationResolver(): MutationResolver {
+    const start = this.pos;
     this.expect('mutation');
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
@@ -1162,8 +1223,9 @@ class Parser {
     const inlineComment = this.parseInlineComment();
     this.skipWhitespaceOnly();
     const pipeline = this.parsePipeline();
+    const end = this.pos;
     this.skipWhitespaceOnly();
-    return { name, pipeline, inlineComment: inlineComment || undefined };
+    return { name, pipeline, inlineComment: inlineComment || undefined, start, end };
   }
 
   private parseFeatureFlags(): Pipeline {
@@ -1177,38 +1239,45 @@ class Parser {
   }
 
   private parseRoute(): Route {
+    const start = this.pos;
     const method = this.parseMethod();
     this.skipInlineSpaces();
     const path = this.consumeWhile((c) => c !== ' ' && c !== '\n' && c !== '#');
     const inlineComment = this.parseInlineComment();
     this.skipSpaces();
     const pipeline = this.parsePipelineRef();
+    const end = this.pos;
     this.skipWhitespaceOnly();
-    return { method, path, pipeline, inlineComment: inlineComment || undefined };
+    return { method, path, pipeline, inlineComment: inlineComment || undefined, start, end };
   }
 
   private parseWhen(): When {
     const calling = this.tryParse(() => {
+      const start = this.pos;
       this.expect('calling');
       this.skipInlineSpaces();
       const method = this.parseMethod();
       this.skipInlineSpaces();
       const path = this.consumeWhile((c) => c !== '\n');
-      return { kind: 'CallingRoute', method, path } as When;
+      const end = this.pos;
+      return { kind: 'CallingRoute', method, path, start, end } as When;
     });
     if (calling) return calling;
 
     const executingPipeline = this.tryParse(() => {
+      const start = this.pos;
       this.expect('executing');
       this.skipInlineSpaces();
       this.expect('pipeline');
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: 'ExecutingPipeline', name } as When;
+      const end = this.pos;
+      return { kind: 'ExecutingPipeline', name, start, end } as When;
     });
     if (executingPipeline) return executingPipeline;
 
     const executingVariable = this.tryParse(() => {
+      const start = this.pos;
       this.expect('executing');
       this.skipInlineSpaces();
       this.expect('variable');
@@ -1216,7 +1285,8 @@ class Parser {
       const varType = this.parseIdentifier();
       this.skipInlineSpaces();
       const name = this.parseIdentifier();
-      return { kind: 'ExecutingVariable', varType, name } as When;
+      const end = this.pos;
+      return { kind: 'ExecutingVariable', varType, name, start, end } as When;
     });
     if (executingVariable) return executingVariable;
 
@@ -1225,6 +1295,7 @@ class Parser {
 
   private parseCondition(): Condition {
     this.skipSpaces();
+    const start = this.pos;
     const ct = (() => {
       if (this.match('then')) return 'Then' as const;
       if (this.match('and')) return 'And' as const;
@@ -1265,6 +1336,7 @@ class Parser {
         return this.consumeWhile((c) => c !== '\n');
       })();
 
+      const end = this.pos;
       return {
         conditionType: ct,
         field: 'call',
@@ -1272,6 +1344,8 @@ class Parser {
         value,
         isCallAssertion: true,
         callTarget,
+        start,
+        end,
       };
     }
 
@@ -1358,6 +1432,7 @@ class Parser {
         throw new Error(`Unknown selector operation: ${operation}`);
       }
 
+      const end = this.pos;
       return {
         conditionType: ct,
         field: 'selector',
@@ -1365,6 +1440,8 @@ class Parser {
         value,
         selector: selectorStr,
         domAssert,
+        start,
+        end,
       };
     }
 
@@ -1395,11 +1472,13 @@ class Parser {
       if (v2 !== null) return v2;
       return this.consumeWhile((c) => c !== '\n');
     })();
-    return { conditionType: ct, field, headerName: headerName ?? undefined, jqExpr: jqExpr ?? undefined, comparison, value };
+    const end = this.pos;
+    return { conditionType: ct, field, headerName: headerName ?? undefined, jqExpr: jqExpr ?? undefined, comparison, value, start, end };
   }
 
   private parseMockHead(prefixWord: 'with' | 'and'): Mock {
     this.skipSpaces();
+    const start = this.pos;
     this.expect(prefixWord);
     this.skipInlineSpaces();
     this.expect('mock');
@@ -1421,7 +1500,8 @@ class Parser {
     this.skipInlineSpaces();
     const returnValue = this.parseBacktickString();
     this.skipSpaces();
-    return { target, returnValue };
+    const end = this.pos;
+    return { target, returnValue, start, end };
   }
 
   private parseMock(): Mock {
