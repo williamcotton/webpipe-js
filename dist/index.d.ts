@@ -143,6 +143,7 @@ type TagExpr = {
 type PipelineStep = {
     kind: 'Regular';
     name: string;
+    args: string[];
     config: string;
     configType: ConfigType;
     condition?: TagExpr;

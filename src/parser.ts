@@ -134,7 +134,7 @@ export type TagExpr =
   | { kind: 'Or'; left: TagExpr; right: TagExpr };
 
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; config: string; configType: ConfigType; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
+  | { kind: 'Regular'; name: string; args: string[]; config: string; configType: ConfigType; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
   | { kind: 'Result'; branches: ResultBranch[]; start: number; end: number }
   | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline; start: number; end: number }
   | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline; start: number; end: number }
@@ -795,6 +795,11 @@ class Parser {
     this.expect('|>');
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
+
+    // Parse optional inline arguments: middleware(arg1, arg2) or middleware[arg1, arg2]
+    const args = this.parseInlineArgs();
+
+    this.skipInlineSpaces();
     this.expect(':');
     this.skipInlineSpaces();
     const { config, configType } = this.parseStepConfig();
@@ -807,7 +812,7 @@ class Parser {
 
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: 'Regular', name, config, configType, condition, parsedJoinTargets, start, end };
+    return { kind: 'Regular', name, args, config, configType, condition, parsedJoinTargets, start, end };
   }
 
   /**
@@ -885,6 +890,161 @@ class Parser {
     }
 
     return names;
+  }
+
+  /**
+   * Split argument content by commas while respecting nesting depth and strings
+   * Example: `"url", {a:1, b:2}` -> [`"url"`, `{a:1, b:2}`]
+   */
+  private splitBalancedArgs(content: string): string[] {
+    const args: string[] = [];
+    let current = '';
+    let depth = 0;
+    let inString = false;
+    let stringChar = '';
+    let escapeNext = false;
+
+    for (let i = 0; i < content.length; i++) {
+      const ch = content[i];
+
+      if (escapeNext) {
+        current += ch;
+        escapeNext = false;
+        continue;
+      }
+
+      if (ch === '\\' && inString) {
+        current += ch;
+        escapeNext = true;
+        continue;
+      }
+
+      if ((ch === '"' || ch === '`') && !inString) {
+        inString = true;
+        stringChar = ch;
+        current += ch;
+        continue;
+      }
+
+      if (ch === stringChar && inString) {
+        inString = false;
+        stringChar = '';
+        current += ch;
+        continue;
+      }
+
+      if (inString) {
+        current += ch;
+        continue;
+      }
+
+      // Track nesting depth for brackets, braces, parentheses
+      if (ch === '(' || ch === '[' || ch === '{') {
+        depth++;
+        current += ch;
+      } else if (ch === ')' || ch === ']' || ch === '}') {
+        depth--;
+        current += ch;
+      } else if (ch === ',' && depth === 0) {
+        // Split on comma at depth 0
+        args.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+
+    // Add the last argument
+    if (current.trim().length > 0) {
+      args.push(current.trim());
+    }
+
+    return args;
+  }
+
+  /**
+   * Parse inline arguments: middleware(arg1, arg2) or middleware[arg1, arg2]
+   * Returns the array of argument strings and advances position past the closing bracket
+   */
+  private parseInlineArgs(): string[] {
+    const trimmedStart = this.pos;
+    this.skipInlineSpaces();
+
+    // Check if we have '(' or '['
+    const ch = this.cur();
+    if (ch !== '(' && ch !== '[') {
+      this.pos = trimmedStart;
+      return [];
+    }
+
+    const openChar = ch;
+    const closeChar = openChar === '(' ? ')' : ']';
+    this.pos++; // consume opening bracket
+
+    // Find the balanced closing bracket
+    let depth = 1;
+    let inString = false;
+    let stringChar = '';
+    let escapeNext = false;
+    const contentStart = this.pos;
+
+    while (!this.eof() && depth > 0) {
+      const c = this.cur();
+
+      if (escapeNext) {
+        this.pos++;
+        escapeNext = false;
+        continue;
+      }
+
+      if (c === '\\' && inString) {
+        this.pos++;
+        escapeNext = true;
+        continue;
+      }
+
+      if ((c === '"' || c === '`') && !inString) {
+        inString = true;
+        stringChar = c;
+        this.pos++;
+        continue;
+      }
+
+      if (c === stringChar && inString) {
+        inString = false;
+        stringChar = '';
+        this.pos++;
+        continue;
+      }
+
+      if (!inString) {
+        if (c === openChar) {
+          depth++;
+        } else if (c === closeChar) {
+          depth--;
+          if (depth === 0) {
+            break;
+          }
+        }
+      }
+
+      this.pos++;
+    }
+
+    if (depth !== 0) {
+      throw new ParseFailure(`unclosed ${openChar}`, contentStart);
+    }
+
+    // Extract the content between the brackets
+    const argsContent = this.text.slice(contentStart, this.pos);
+    this.pos++; // consume closing bracket
+
+    // Split by commas while respecting nesting
+    if (argsContent.trim().length === 0) {
+      return [];
+    }
+
+    return this.splitBalancedArgs(argsContent);
   }
 
   private parseResultStep(): PipelineStep {
@@ -2173,9 +2333,10 @@ export function formatConfigValue(value: ConfigValue): string {
 
 export function formatPipelineStep(step: PipelineStep, indent: string = '  '): string {
   if (step.kind === 'Regular') {
+    const argsPart = step.args.length > 0 ? `(${step.args.join(', ')})` : '';
     const configPart = formatStepConfig(step.config, step.configType);
     const conditionPart = step.condition ? ' ' + formatTagExpr(step.condition) : '';
-    return `${indent}|> ${step.name}: ${configPart}${conditionPart}`;
+    return `${indent}|> ${step.name}${argsPart}: ${configPart}${conditionPart}`;
   } else if (step.kind === 'Result') {
     const lines: string[] = [`${indent}|> result`];
     step.branches.forEach(branch => {

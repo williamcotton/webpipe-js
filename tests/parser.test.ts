@@ -797,3 +797,171 @@ describe "Let Test"
   });
 });
 
+describe('parseProgram - inline arguments', () => {
+  it('parses middleware with single inline argument', () => {
+    const src = `GET /test
+  |> fetch("https://api.example.com/users"): \`_\``;
+    const program = parseProgram(src);
+    expect(program.routes.length).toBe(1);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
+        expect(step.name).toBe('fetch');
+        expect(step.args).toEqual(['"https://api.example.com/users"']);
+        expect(step.config).toBe('_');
+      }
+    }
+  });
+
+  it('parses middleware with multiple inline arguments', () => {
+    const src = `GET /test
+  |> fetch("url", {method: "POST", body: {id: 123}}): \`_\``;
+    const program = parseProgram(src);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
+        expect(step.name).toBe('fetch');
+        expect(step.args.length).toBe(2);
+        expect(step.args[0]).toBe('"url"');
+        expect(step.args[1]).toBe('{method: "POST", body: {id: 123}}');
+      }
+    }
+  });
+
+  it('parses middleware with square bracket arguments', () => {
+    const src = `GET /test
+  |> pg[.userId, "active"]: \`SELECT * FROM users WHERE id = $1 AND status = $2\``;
+    const program = parseProgram(src);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
+        expect(step.name).toBe('pg');
+        expect(step.args.length).toBe(2);
+        expect(step.args[0]).toBe('.userId');
+        expect(step.args[1]).toBe('"active"');
+      }
+    }
+  });
+
+  it('parses middleware with backtick expressions in arguments', () => {
+    const src = 'GET /test\n  |> fetch(`"https://example.com/" + .id`): `_`';
+    const program = parseProgram(src);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
+        expect(step.name).toBe('fetch');
+        expect(step.args.length).toBe(1);
+        expect(step.args[0]).toBe('`"https://example.com/" + .id`');
+      }
+    }
+  });
+
+  it('parses middleware without arguments (backward compatibility)', () => {
+    const src = `GET /test
+  |> jq: \`.userId\``;
+    const program = parseProgram(src);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind === 'Regular');
+      if (step.kind === 'Regular') {
+        expect(step.name).toBe('jq');
+        expect(step.args).toEqual([]);
+        expect(step.config).toBe('.userId');
+      }
+    }
+  });
+
+  it('parses middleware with nested objects in arguments', () => {
+    const src = `GET /test
+  |> fetch("url", {headers: {"Content-Type": "application/json", "Authorization": "Bearer token"}, body: {data: {nested: true}}}): \`_\``;
+    const program = parseProgram(src);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
+        expect(step.name).toBe('fetch');
+        expect(step.args.length).toBe(2);
+        expect(step.args[0]).toBe('"url"');
+        // The second argument should preserve the nested structure
+        expect(step.args[1]).toContain('"Content-Type"');
+        expect(step.args[1]).toContain('"Authorization"');
+        expect(step.args[1]).toContain('nested: true');
+      }
+    }
+  });
+
+  it('parses graphql middleware with inline variables', () => {
+    const src = `GET /test
+  |> graphql({userId: .id}): \`query { user { name } }\``;
+    const program = parseProgram(src);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
+        expect(step.name).toBe('graphql');
+        expect(step.args.length).toBe(1);
+        expect(step.args[0]).toBe('{userId: .id}');
+      }
+    }
+  });
+
+  it('roundtrip: parse -> format -> parse preserves inline arguments', () => {
+    const src = `GET /test
+  |> fetch("url", {method: "POST"}): \`_\`
+  |> pg([.id]): \`SELECT * FROM users WHERE id = $1\`
+`;
+    const program1 = parseProgram(src);
+    const formatted = prettyPrint(program1);
+    const program2 = parseProgram(formatted);
+
+    const steps1 = (program1.routes[0].pipeline as any).pipeline.steps;
+    const steps2 = (program2.routes[0].pipeline as any).pipeline.steps;
+
+    expect(stripPositions(steps1)).toEqual(stripPositions(steps2));
+  });
+
+  it('formats inline arguments correctly', () => {
+    const src = `GET /test
+  |> fetch("url"): \`_\``;
+    const program = parseProgram(src);
+    const formatted = prettyPrint(program);
+
+    expect(formatted).toContain('|> fetch("url"): `_`');
+  });
+
+  it('handles empty argument list', () => {
+    const src = `GET /test
+  |> custom(): \`config\``;
+    const program = parseProgram(src);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
+        expect(step.name).toBe('custom');
+        expect(step.args).toEqual([]);
+        expect(step.config).toBe('config');
+      }
+    }
+  });
+});
+

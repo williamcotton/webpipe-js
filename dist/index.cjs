@@ -512,6 +512,8 @@ var Parser = class {
     this.expect("|>");
     this.skipInlineSpaces();
     const name = this.parseIdentifier();
+    const args = this.parseInlineArgs();
+    this.skipInlineSpaces();
     this.expect(":");
     this.skipInlineSpaces();
     const { config, configType } = this.parseStepConfig();
@@ -519,7 +521,7 @@ var Parser = class {
     const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: "Regular", name, config, configType, condition, parsedJoinTargets, start, end };
+    return { kind: "Regular", name, args, config, configType, condition, parsedJoinTargets, start, end };
   }
   /**
    * Parse optional step condition (tag expression after the config)
@@ -572,6 +574,129 @@ var Parser = class {
       return void 0;
     }
     return names;
+  }
+  /**
+   * Split argument content by commas while respecting nesting depth and strings
+   * Example: `"url", {a:1, b:2}` -> [`"url"`, `{a:1, b:2}`]
+   */
+  splitBalancedArgs(content) {
+    const args = [];
+    let current = "";
+    let depth = 0;
+    let inString = false;
+    let stringChar = "";
+    let escapeNext = false;
+    for (let i = 0; i < content.length; i++) {
+      const ch = content[i];
+      if (escapeNext) {
+        current += ch;
+        escapeNext = false;
+        continue;
+      }
+      if (ch === "\\" && inString) {
+        current += ch;
+        escapeNext = true;
+        continue;
+      }
+      if ((ch === '"' || ch === "`") && !inString) {
+        inString = true;
+        stringChar = ch;
+        current += ch;
+        continue;
+      }
+      if (ch === stringChar && inString) {
+        inString = false;
+        stringChar = "";
+        current += ch;
+        continue;
+      }
+      if (inString) {
+        current += ch;
+        continue;
+      }
+      if (ch === "(" || ch === "[" || ch === "{") {
+        depth++;
+        current += ch;
+      } else if (ch === ")" || ch === "]" || ch === "}") {
+        depth--;
+        current += ch;
+      } else if (ch === "," && depth === 0) {
+        args.push(current.trim());
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+    if (current.trim().length > 0) {
+      args.push(current.trim());
+    }
+    return args;
+  }
+  /**
+   * Parse inline arguments: middleware(arg1, arg2) or middleware[arg1, arg2]
+   * Returns the array of argument strings and advances position past the closing bracket
+   */
+  parseInlineArgs() {
+    const trimmedStart = this.pos;
+    this.skipInlineSpaces();
+    const ch = this.cur();
+    if (ch !== "(" && ch !== "[") {
+      this.pos = trimmedStart;
+      return [];
+    }
+    const openChar = ch;
+    const closeChar = openChar === "(" ? ")" : "]";
+    this.pos++;
+    let depth = 1;
+    let inString = false;
+    let stringChar = "";
+    let escapeNext = false;
+    const contentStart = this.pos;
+    while (!this.eof() && depth > 0) {
+      const c = this.cur();
+      if (escapeNext) {
+        this.pos++;
+        escapeNext = false;
+        continue;
+      }
+      if (c === "\\" && inString) {
+        this.pos++;
+        escapeNext = true;
+        continue;
+      }
+      if ((c === '"' || c === "`") && !inString) {
+        inString = true;
+        stringChar = c;
+        this.pos++;
+        continue;
+      }
+      if (c === stringChar && inString) {
+        inString = false;
+        stringChar = "";
+        this.pos++;
+        continue;
+      }
+      if (!inString) {
+        if (c === openChar) {
+          depth++;
+        } else if (c === closeChar) {
+          depth--;
+          if (depth === 0) {
+            break;
+          }
+        }
+      }
+      this.pos++;
+    }
+    if (depth !== 0) {
+      throw new ParseFailure(`unclosed ${openChar}`, contentStart);
+    }
+    const argsContent = this.text.slice(contentStart, this.pos);
+    this.pos++;
+    if (argsContent.trim().length === 0) {
+      return [];
+    }
+    return this.splitBalancedArgs(argsContent);
   }
   parseResultStep() {
     this.skipWhitespaceOnly();
@@ -1641,9 +1766,10 @@ function formatConfigValue(value) {
 }
 function formatPipelineStep(step, indent = "  ") {
   if (step.kind === "Regular") {
+    const argsPart = step.args.length > 0 ? `(${step.args.join(", ")})` : "";
     const configPart = formatStepConfig(step.config, step.configType);
     const conditionPart = step.condition ? " " + formatTagExpr(step.condition) : "";
-    return `${indent}|> ${step.name}: ${configPart}${conditionPart}`;
+    return `${indent}|> ${step.name}${argsPart}: ${configPart}${conditionPart}`;
   } else if (step.kind === "Result") {
     const lines = [`${indent}|> result`];
     step.branches.forEach((branch) => {
