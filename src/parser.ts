@@ -800,9 +800,18 @@ class Parser {
     const args = this.parseInlineArgs();
 
     this.skipInlineSpaces();
-    this.expect(':');
-    this.skipInlineSpaces();
-    const { config, configType } = this.parseStepConfig();
+
+    let config = '';
+    let configType: ConfigType = 'quoted'; // Default config type for empty/missing config
+
+    // Check for optional config starting with ':'
+    if (this.cur() === ':') {
+      this.pos++; // consume ':'
+      this.skipInlineSpaces();
+      const res = this.parseStepConfig();
+      config = res.config;
+      configType = res.configType;
+    }
 
     // Parse optional condition (tag expression)
     const condition = this.parseStepCondition();

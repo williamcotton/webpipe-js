@@ -462,9 +462,15 @@ var Parser = class {
     const name = this.parseIdentifier();
     const args = this.parseInlineArgs();
     this.skipInlineSpaces();
-    this.expect(":");
-    this.skipInlineSpaces();
-    const { config, configType } = this.parseStepConfig();
+    let config = "";
+    let configType = "quoted";
+    if (this.cur() === ":") {
+      this.pos++;
+      this.skipInlineSpaces();
+      const res = this.parseStepConfig();
+      config = res.config;
+      configType = res.configType;
+    }
     const condition = this.parseStepCondition();
     const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
