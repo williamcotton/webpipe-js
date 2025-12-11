@@ -46,6 +46,7 @@ __export(index_exports, {
   printQueryResolver: () => printQueryResolver,
   printRoute: () => printRoute,
   printTest: () => printTest,
+  printTypeResolver: () => printTypeResolver,
   printVariable: () => printVariable
 });
 module.exports = __toCommonJS(index_exports);
@@ -152,6 +153,7 @@ var Parser = class {
     let graphqlSchema;
     const queries = [];
     const mutations = [];
+    const resolvers = [];
     let featureFlags;
     while (!this.eof()) {
       this.skipWhitespaceOnly();
@@ -185,6 +187,12 @@ var Parser = class {
       if (mutation) {
         mutation.lineNumber = this.getLineNumber(start);
         mutations.push(mutation);
+        continue;
+      }
+      const resolver = this.tryParse(() => this.parseTypeResolver());
+      if (resolver) {
+        resolver.lineNumber = this.getLineNumber(start);
+        resolvers.push(resolver);
         continue;
       }
       const flags = this.tryParse(() => this.parseFeatureFlags());
@@ -231,7 +239,7 @@ var Parser = class {
       const start = Math.max(0, idx);
       this.report("Unclosed backtick-delimited string", start, start + 1, "warning");
     }
-    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, featureFlags };
+    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, resolvers, featureFlags };
   }
   eof() {
     return this.pos >= this.len;
@@ -996,6 +1004,22 @@ var Parser = class {
     this.skipWhitespaceOnly();
     return { name, pipeline, inlineComment: inlineComment || void 0, start, end };
   }
+  parseTypeResolver() {
+    const start = this.pos;
+    this.expect("resolver");
+    this.skipInlineSpaces();
+    const typeName = this.parseIdentifier();
+    this.expect(".");
+    const fieldName = this.parseIdentifier();
+    this.skipInlineSpaces();
+    this.expect("=");
+    const inlineComment = this.parseInlineComment();
+    this.skipWhitespaceOnly();
+    const pipeline = this.parsePipeline();
+    const end = this.pos;
+    this.skipWhitespaceOnly();
+    return { typeName, fieldName, pipeline, inlineComment: inlineComment || void 0, start, end };
+  }
   parseFeatureFlags() {
     this.expect("featureFlags");
     this.skipInlineSpaces();
@@ -1592,6 +1616,19 @@ function printMutationResolver(mutation) {
   });
   return lines.join("\n");
 }
+function printTypeResolver(resolver) {
+  const lines = [];
+  const resolverLine = `resolver ${resolver.typeName}.${resolver.fieldName} =`;
+  if (resolver.inlineComment) {
+    lines.push(`${resolverLine} ${printComment(resolver.inlineComment)}`);
+  } else {
+    lines.push(resolverLine);
+  }
+  resolver.pipeline.steps.forEach((step) => {
+    lines.push(formatPipelineStep(step));
+  });
+  return lines.join("\n");
+}
 function printMock(mock, indent = "  ") {
   return `${indent}with mock ${mock.target} returning \`${mock.returnValue}\``;
 }
@@ -1700,6 +1737,9 @@ function prettyPrint(program) {
   program.mutations.forEach((mutation) => {
     allItems.push({ type: "mutation", item: mutation, lineNumber: mutation.lineNumber || 0 });
   });
+  program.resolvers.forEach((resolver) => {
+    allItems.push({ type: "resolver", item: resolver, lineNumber: resolver.lineNumber || 0 });
+  });
   program.routes.forEach((route) => {
     allItems.push({ type: "route", item: route, lineNumber: route.lineNumber || 0 });
   });
@@ -1735,6 +1775,10 @@ function prettyPrint(program) {
         break;
       case "mutation":
         lines.push(printMutationResolver(entry.item));
+        lines.push("");
+        break;
+      case "resolver":
+        lines.push(printTypeResolver(entry.item));
         lines.push("");
         break;
       case "route":
@@ -1912,5 +1956,6 @@ function formatWhen(when) {
   printQueryResolver,
   printRoute,
   printTest,
+  printTypeResolver,
   printVariable
 });

@@ -8,6 +8,7 @@ export interface Program {
   graphqlSchema?: GraphQLSchema;
   queries: QueryResolver[];
   mutations: MutationResolver[];
+  resolvers: TypeResolver[];
   featureFlags?: Pipeline;
 }
 
@@ -78,6 +79,16 @@ export interface QueryResolver {
 
 export interface MutationResolver {
   name: string;
+  pipeline: Pipeline;
+  lineNumber?: number;
+  inlineComment?: Comment;
+  start: number;
+  end: number;
+}
+
+export interface TypeResolver {
+  typeName: string;
+  fieldName: string;
   pipeline: Pipeline;
   lineNumber?: number;
   inlineComment?: Comment;
@@ -357,6 +368,7 @@ class Parser {
     let graphqlSchema: GraphQLSchema | undefined;
     const queries: QueryResolver[] = [];
     const mutations: MutationResolver[] = [];
+    const resolvers: TypeResolver[] = [];
     let featureFlags: Pipeline | undefined;
 
     while (!this.eof()) {
@@ -398,6 +410,13 @@ class Parser {
       if (mutation) {
         mutation.lineNumber = this.getLineNumber(start);
         mutations.push(mutation);
+        continue;
+      }
+
+      const resolver = this.tryParse(() => this.parseTypeResolver());
+      if (resolver) {
+        resolver.lineNumber = this.getLineNumber(start);
+        resolvers.push(resolver);
         continue;
       }
 
@@ -452,7 +471,7 @@ class Parser {
       this.report('Unclosed backtick-delimited string', start, start + 1, 'warning');
     }
 
-    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, featureFlags };
+    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, resolvers, featureFlags };
   }
 
   private eof(): boolean { return this.pos >= this.len; }
@@ -1397,6 +1416,23 @@ class Parser {
     return { name, pipeline, inlineComment: inlineComment || undefined, start, end };
   }
 
+  private parseTypeResolver(): TypeResolver {
+    const start = this.pos;
+    this.expect('resolver');
+    this.skipInlineSpaces();
+    const typeName = this.parseIdentifier();
+    this.expect('.');
+    const fieldName = this.parseIdentifier();
+    this.skipInlineSpaces();
+    this.expect('=');
+    const inlineComment = this.parseInlineComment();
+    this.skipWhitespaceOnly();
+    const pipeline = this.parsePipeline();
+    const end = this.pos;
+    this.skipWhitespaceOnly();
+    return { typeName, fieldName, pipeline, inlineComment: inlineComment || undefined, start, end };
+  }
+
   private parseFeatureFlags(): Pipeline {
     this.expect('featureFlags');
     this.skipInlineSpaces();
@@ -2109,6 +2145,20 @@ export function printMutationResolver(mutation: MutationResolver): string {
   return lines.join('\n');
 }
 
+export function printTypeResolver(resolver: TypeResolver): string {
+  const lines: string[] = [];
+  const resolverLine = `resolver ${resolver.typeName}.${resolver.fieldName} =`;
+  if (resolver.inlineComment) {
+    lines.push(`${resolverLine} ${printComment(resolver.inlineComment)}`);
+  } else {
+    lines.push(resolverLine);
+  }
+  resolver.pipeline.steps.forEach(step => {
+    lines.push(formatPipelineStep(step));
+  });
+  return lines.join('\n');
+}
+
 export function printMock(mock: Mock, indent: string = '  '): string {
   return `${indent}with mock ${mock.target} returning \`${mock.returnValue}\``;
 }
@@ -2259,6 +2309,10 @@ export function prettyPrint(program: Program): string {
     allItems.push({ type: 'mutation', item: mutation, lineNumber: mutation.lineNumber || 0 });
   });
 
+  program.resolvers.forEach(resolver => {
+    allItems.push({ type: 'resolver', item: resolver, lineNumber: resolver.lineNumber || 0 });
+  });
+
   program.routes.forEach(route => {
     allItems.push({ type: 'route', item: route, lineNumber: route.lineNumber || 0 });
   });
@@ -2301,6 +2355,10 @@ export function prettyPrint(program: Program): string {
         break;
       case 'mutation':
         lines.push(printMutationResolver(entry.item));
+        lines.push('');
+        break;
+      case 'resolver':
+        lines.push(printTypeResolver(entry.item));
         lines.push('');
         break;
       case 'route':
