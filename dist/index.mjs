@@ -471,18 +471,22 @@ var Parser = class {
     this.skipInlineSpaces();
     let config = "";
     let configType = "quoted";
+    let configStart = void 0;
+    let configEnd = void 0;
     if (this.cur() === ":") {
       this.pos++;
       this.skipInlineSpaces();
+      configStart = this.pos;
       const res = this.parseStepConfig();
       config = res.config;
       configType = res.configType;
+      configEnd = this.pos;
     }
     const condition = this.parseStepCondition();
     const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: "Regular", name, args, config, configType, condition, parsedJoinTargets, start, end };
+    return { kind: "Regular", name, args, config, configType, configStart, configEnd, condition, parsedJoinTargets, start, end };
   }
   /**
    * Parse optional step condition (tag expression after the config)

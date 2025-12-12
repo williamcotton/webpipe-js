@@ -145,7 +145,7 @@ export type TagExpr =
   | { kind: 'Or'; left: TagExpr; right: TagExpr };
 
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; args: string[]; config: string; configType: ConfigType; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
+  | { kind: 'Regular'; name: string; args: string[]; config: string; configType: ConfigType; configStart?: number; configEnd?: number; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
   | { kind: 'Result'; branches: ResultBranch[]; start: number; end: number }
   | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline; start: number; end: number }
   | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline; start: number; end: number }
@@ -822,14 +822,18 @@ class Parser {
 
     let config = '';
     let configType: ConfigType = 'quoted'; // Default config type for empty/missing config
+    let configStart: number | undefined = undefined;
+    let configEnd: number | undefined = undefined;
 
     // Check for optional config starting with ':'
     if (this.cur() === ':') {
       this.pos++; // consume ':'
       this.skipInlineSpaces();
+      configStart = this.pos; // Capture position before parsing config
       const res = this.parseStepConfig();
       config = res.config;
       configType = res.configType;
+      configEnd = this.pos; // Capture position after parsing config
     }
 
     // Parse optional condition (tag expression)
@@ -840,7 +844,7 @@ class Parser {
 
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: 'Regular', name, args, config, configType, condition, parsedJoinTargets, start, end };
+    return { kind: 'Regular', name, args, config, configType, configStart, configEnd, condition, parsedJoinTargets, start, end };
   }
 
   /**

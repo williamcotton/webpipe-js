@@ -156,6 +156,8 @@ type PipelineStep = {
     args: string[];
     config: string;
     configType: ConfigType;
+    configStart?: number;
+    configEnd?: number;
     condition?: TagExpr;
     parsedJoinTargets?: string[];
     start: number;
