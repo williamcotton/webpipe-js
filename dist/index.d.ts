@@ -153,6 +153,8 @@ type TagExpr = {
 type PipelineStep = {
     kind: 'Regular';
     name: string;
+    nameStart: number;
+    nameEnd: number;
     args: string[];
     config: string;
     configType: ConfigType;
@@ -241,7 +243,9 @@ interface It {
 type When = {
     kind: 'CallingRoute';
     method: string;
+    methodStart: number;
     path: string;
+    pathStart: number;
     start: number;
     end: number;
 } | {

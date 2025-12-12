@@ -470,7 +470,9 @@ var Parser = class {
     const start = this.pos;
     this.expect("|>");
     this.skipInlineSpaces();
+    const nameStart = this.pos;
     const name = this.parseIdentifier();
+    const nameEnd = this.pos;
     const args = this.parseInlineArgs();
     this.skipInlineSpaces();
     let config = "";
@@ -490,7 +492,7 @@ var Parser = class {
     const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: "Regular", name, args, config, configType, configStart, configEnd, condition, parsedJoinTargets, start, end };
+    return { kind: "Regular", name, nameStart, nameEnd, args, config, configType, configStart, configEnd, condition, parsedJoinTargets, start, end };
   }
   /**
    * Parse optional step condition (tag expression after the config)
@@ -1004,11 +1006,13 @@ var Parser = class {
       const start = this.pos;
       this.expect("calling");
       this.skipInlineSpaces();
+      const methodStart = this.pos;
       const method = this.parseMethod();
       this.skipInlineSpaces();
+      const pathStart = this.pos;
       const path = this.consumeWhile((c) => c !== "\n");
       const end = this.pos;
-      return { kind: "CallingRoute", method, path, start, end };
+      return { kind: "CallingRoute", method, methodStart, path, pathStart, start, end };
     });
     if (calling) return calling;
     const executingPipeline = this.tryParse(() => {

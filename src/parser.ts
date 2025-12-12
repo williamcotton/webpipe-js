@@ -145,7 +145,7 @@ export type TagExpr =
   | { kind: 'Or'; left: TagExpr; right: TagExpr };
 
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; args: string[]; config: string; configType: ConfigType; configStart?: number; configEnd?: number; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
+  | { kind: 'Regular'; name: string; nameStart: number; nameEnd: number; args: string[]; config: string; configType: ConfigType; configStart?: number; configEnd?: number; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
   | { kind: 'Result'; branches: ResultBranch[]; start: number; end: number }
   | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline; start: number; end: number }
   | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline; start: number; end: number }
@@ -205,7 +205,7 @@ export interface It {
 }
 
 export type When =
-  | { kind: 'CallingRoute'; method: string; path: string; start: number; end: number }
+  | { kind: 'CallingRoute'; method: string; methodStart: number; path: string; pathStart: number; start: number; end: number }
   | { kind: 'ExecutingPipeline'; name: string; nameStart: number; start: number; end: number }
   | { kind: 'ExecutingVariable'; varType: string; name: string; nameStart: number; start: number; end: number };
 
@@ -819,7 +819,9 @@ class Parser {
     const start = this.pos;
     this.expect('|>');
     this.skipInlineSpaces();
+    const nameStart = this.pos; // Capture position before parsing name
     const name = this.parseIdentifier();
+    const nameEnd = this.pos; // Capture position after parsing name
 
     // Parse optional inline arguments: middleware(arg1, arg2) or middleware[arg1, arg2]
     const args = this.parseInlineArgs();
@@ -850,7 +852,7 @@ class Parser {
 
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: 'Regular', name, args, config, configType, configStart, configEnd, condition, parsedJoinTargets, start, end };
+    return { kind: 'Regular', name, nameStart, nameEnd, args, config, configType, configStart, configEnd, condition, parsedJoinTargets, start, end };
   }
 
   /**
@@ -1475,11 +1477,13 @@ class Parser {
       const start = this.pos;
       this.expect('calling');
       this.skipInlineSpaces();
+      const methodStart = this.pos;
       const method = this.parseMethod();
       this.skipInlineSpaces();
+      const pathStart = this.pos;
       const path = this.consumeWhile((c) => c !== '\n');
       const end = this.pos;
-      return { kind: 'CallingRoute', method, path, start, end } as When;
+      return { kind: 'CallingRoute', method, methodStart, path, pathStart, start, end } as When;
     });
     if (calling) return calling;
 
