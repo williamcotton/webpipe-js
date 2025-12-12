@@ -184,6 +184,7 @@ export interface Describe {
 
 export interface Mock {
   target: string;
+  targetStart: number;
   returnValue: string;
   start: number;
   end: number;
@@ -205,8 +206,8 @@ export interface It {
 
 export type When =
   | { kind: 'CallingRoute'; method: string; path: string; start: number; end: number }
-  | { kind: 'ExecutingPipeline'; name: string; start: number; end: number }
-  | { kind: 'ExecutingVariable'; varType: string; name: string; start: number; end: number };
+  | { kind: 'ExecutingPipeline'; name: string; nameStart: number; start: number; end: number }
+  | { kind: 'ExecutingVariable'; varType: string; name: string; nameStart: number; start: number; end: number };
 
 export type DomAssertType =
   | { kind: 'Exists' }
@@ -1479,9 +1480,10 @@ class Parser {
       this.skipInlineSpaces();
       this.expect('pipeline');
       this.skipInlineSpaces();
+      const nameStart = this.pos;
       const name = this.parseIdentifier();
       const end = this.pos;
-      return { kind: 'ExecutingPipeline', name, start, end } as When;
+      return { kind: 'ExecutingPipeline', name, nameStart, start, end } as When;
     });
     if (executingPipeline) return executingPipeline;
 
@@ -1493,9 +1495,10 @@ class Parser {
       this.skipInlineSpaces();
       const varType = this.parseIdentifier();
       this.skipInlineSpaces();
+      const nameStart = this.pos;
       const name = this.parseIdentifier();
       const end = this.pos;
-      return { kind: 'ExecutingVariable', varType, name, start, end } as When;
+      return { kind: 'ExecutingVariable', varType, name, nameStart, start, end } as When;
     });
     if (executingVariable) return executingVariable;
 
@@ -1693,6 +1696,7 @@ class Parser {
     this.expect('mock');
     this.skipInlineSpaces();
 
+    const targetStart = this.pos;
     // Support "query <name>" or "mutation <name>" or single identifier
     let target: string;
     if (this.text.startsWith('query ', this.pos) || this.text.startsWith('mutation ', this.pos)) {
@@ -1710,7 +1714,7 @@ class Parser {
     const returnValue = this.parseBacktickString();
     this.skipSpaces();
     const end = this.pos;
-    return { target, returnValue, start, end };
+    return { target, targetStart, returnValue, start, end };
   }
 
   private parseMock(): Mock {

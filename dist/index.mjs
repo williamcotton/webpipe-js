@@ -1010,9 +1010,10 @@ var Parser = class {
       this.skipInlineSpaces();
       this.expect("pipeline");
       this.skipInlineSpaces();
+      const nameStart = this.pos;
       const name = this.parseIdentifier();
       const end = this.pos;
-      return { kind: "ExecutingPipeline", name, start, end };
+      return { kind: "ExecutingPipeline", name, nameStart, start, end };
     });
     if (executingPipeline) return executingPipeline;
     const executingVariable = this.tryParse(() => {
@@ -1023,9 +1024,10 @@ var Parser = class {
       this.skipInlineSpaces();
       const varType = this.parseIdentifier();
       this.skipInlineSpaces();
+      const nameStart = this.pos;
       const name = this.parseIdentifier();
       const end = this.pos;
-      return { kind: "ExecutingVariable", varType, name, start, end };
+      return { kind: "ExecutingVariable", varType, name, nameStart, start, end };
     });
     if (executingVariable) return executingVariable;
     throw new ParseFailure("when", this.pos);
@@ -1193,6 +1195,7 @@ var Parser = class {
     this.skipInlineSpaces();
     this.expect("mock");
     this.skipInlineSpaces();
+    const targetStart = this.pos;
     let target;
     if (this.text.startsWith("query ", this.pos) || this.text.startsWith("mutation ", this.pos)) {
       const type = this.consumeWhile((c) => c !== " ");
@@ -1208,7 +1211,7 @@ var Parser = class {
     const returnValue = this.parseBacktickString();
     this.skipSpaces();
     const end = this.pos;
-    return { target, returnValue, start, end };
+    return { target, targetStart, returnValue, start, end };
   }
   parseMock() {
     return this.parseMockHead("with");

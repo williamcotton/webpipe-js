@@ -220,6 +220,7 @@ interface Describe {
 }
 interface Mock {
     target: string;
+    targetStart: number;
     returnValue: string;
     start: number;
     end: number;
@@ -246,12 +247,14 @@ type When = {
 } | {
     kind: 'ExecutingPipeline';
     name: string;
+    nameStart: number;
     start: number;
     end: number;
 } | {
     kind: 'ExecutingVariable';
     varType: string;
     name: string;
+    nameStart: number;
     start: number;
     end: number;
 };
