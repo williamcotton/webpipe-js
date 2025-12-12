@@ -252,7 +252,7 @@ class Parser {
   private pos: number = 0;
   private diagnostics: ParseDiagnostic[] = [];
   private readonly pipelineRanges: Map<string, { start: number; end: number }> = new Map();
-  private readonly variableRanges: Map<string, { start: number; end: number }> = new Map();
+  private readonly variableRanges: Map<string, Map<string, { start: number; end: number }>> = new Map();
   private readonly testLetVariables: TestLetVariable[] = [];
   private currentDescribeName: string | null = null;
   private currentTestName: string | null = null;
@@ -270,8 +270,13 @@ class Parser {
     return new Map(this.pipelineRanges);
   }
 
-  getVariableRanges(): Map<string, { start: number; end: number }> {
-    return new Map(this.variableRanges);
+  getVariableRanges(): Map<string, Map<string, { start: number; end: number }>> {
+    // Deep copy the nested map
+    const copy = new Map<string, Map<string, { start: number; end: number }>>();
+    for (const [varType, byName] of this.variableRanges.entries()) {
+      copy.set(varType, new Map(byName));
+    }
+    return copy;
   }
 
   getTestLetVariables(): TestLetVariable[] {
@@ -1373,7 +1378,11 @@ class Parser {
     const value = this.parseBacktickString();
     const inlineComment = this.parseInlineComment();
     const end = this.pos;
-    this.variableRanges.set(`${varType}::${name}`, { start, end });
+    // Store variable ranges in nested map structure
+    if (!this.variableRanges.has(varType)) {
+      this.variableRanges.set(varType, new Map());
+    }
+    this.variableRanges.get(varType)!.set(name, { start, end });
     this.skipWhitespaceOnly();
     return { varType, name, value, inlineComment: inlineComment || undefined, start, end };
   }
@@ -2035,7 +2044,7 @@ export function getPipelineRanges(text: string): Map<string, { start: number; en
   return parser.getPipelineRanges();
 }
 
-export function getVariableRanges(text: string): Map<string, { start: number; end: number }> {
+export function getVariableRanges(text: string): Map<string, Map<string, { start: number; end: number }>> {
   const parser = new Parser(text);
   parser.parseProgram();
   return parser.getVariableRanges();

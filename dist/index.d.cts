@@ -305,10 +305,10 @@ declare function getPipelineRanges(text: string): Map<string, {
     start: number;
     end: number;
 }>;
-declare function getVariableRanges(text: string): Map<string, {
+declare function getVariableRanges(text: string): Map<string, Map<string, {
     start: number;
     end: number;
-}>;
+}>>;
 declare function getTestLetVariables(text: string): TestLetVariable[];
 declare function getTestLetVariableRanges(text: string): Map<string, {
     start: number;

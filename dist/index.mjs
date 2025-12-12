@@ -18,7 +18,11 @@ var Parser = class {
     return new Map(this.pipelineRanges);
   }
   getVariableRanges() {
-    return new Map(this.variableRanges);
+    const copy = /* @__PURE__ */ new Map();
+    for (const [varType, byName] of this.variableRanges.entries()) {
+      copy.set(varType, new Map(byName));
+    }
+    return copy;
   }
   getTestLetVariables() {
     return [...this.testLetVariables];
@@ -911,7 +915,10 @@ var Parser = class {
     const value = this.parseBacktickString();
     const inlineComment = this.parseInlineComment();
     const end = this.pos;
-    this.variableRanges.set(`${varType}::${name}`, { start, end });
+    if (!this.variableRanges.has(varType)) {
+      this.variableRanges.set(varType, /* @__PURE__ */ new Map());
+    }
+    this.variableRanges.get(varType).set(name, { start, end });
     this.skipWhitespaceOnly();
     return { varType, name, value, inlineComment: inlineComment || void 0, start, end };
   }
