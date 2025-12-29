@@ -896,11 +896,22 @@ var Parser = class {
       const commentPos = this.pos;
       const comment = this.tryParse(() => this.parseStandaloneComment());
       if (comment) {
+        const lookAheadPos = this.pos;
         if (this.cur() === "\n") this.pos++;
-        this.skipWhitespaceOnly();
+        while (true) {
+          this.skipWhitespaceOnly();
+          const nextComment = this.tryParse(() => this.parseStandaloneComment());
+          if (nextComment) {
+            if (this.cur() === "\n") this.pos++;
+            continue;
+          }
+          break;
+        }
         const hasFollowingStep = this.text.startsWith("|>", this.pos);
+        this.pos = lookAheadPos;
         if (hasFollowingStep || steps.length === 0) {
           comments.push(comment);
+          if (this.cur() === "\n") this.pos++;
           continue;
         } else {
           this.pos = commentPos;
@@ -933,11 +944,22 @@ var Parser = class {
       const commentPos = this.pos;
       const comment = this.tryParse(() => this.parseStandaloneComment());
       if (comment) {
+        const lookAheadPos = this.pos;
         if (this.cur() === "\n") this.pos++;
-        this.skipWhitespaceOnly();
+        while (true) {
+          this.skipWhitespaceOnly();
+          const nextComment = this.tryParse(() => this.parseStandaloneComment());
+          if (nextComment) {
+            if (this.cur() === "\n") this.pos++;
+            continue;
+          }
+          break;
+        }
         const hasFollowingStep = this.text.startsWith("|>", this.pos);
+        this.pos = lookAheadPos;
         if (hasFollowingStep || steps.length === 0) {
           comments.push(comment);
+          if (this.cur() === "\n") this.pos++;
           continue;
         } else {
           this.pos = commentPos;
@@ -1813,7 +1835,7 @@ function printDescribe(describe) {
   });
   items.sort((a, b) => a.lineNumber - b.lineNumber);
   let lastType = null;
-  items.forEach((entry) => {
+  items.forEach((entry, index) => {
     if (lastType === "variable" && entry.type !== "variable") {
       lines.push("");
     }
@@ -1825,6 +1847,10 @@ function printDescribe(describe) {
         break;
       case "mock":
         lines.push(printMock(entry.item));
+        const nextItem = items[index + 1];
+        if (nextItem && (nextItem.type === "mock" || nextItem.type === "comment")) {
+          lines.push("");
+        }
         break;
       case "comment":
         lines.push(`  ${printComment(entry.item)}`);
@@ -1879,6 +1905,9 @@ function prettyPrint(program) {
     const nextItem = allItems[index + 1];
     const shouldAddBlankLine = () => {
       if (!nextItem) return false;
+      if (entry.type === "describe") {
+        return false;
+      }
       if (entry.type === "comment") {
         return nextItem.lineNumber - entry.lineNumber > 1;
       }

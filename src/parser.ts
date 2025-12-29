@@ -1304,15 +1304,30 @@ class Parser {
       const commentPos = this.pos;
       const comment = this.tryParse(() => this.parseStandaloneComment());
       if (comment) {
-        // Look ahead: is there a pipeline step after this comment?
+        // Look ahead: is there a pipeline step after this comment (and any following comments)?
+        const lookAheadPos = this.pos;
         if (this.cur() === '\n') this.pos++;
-        this.skipWhitespaceOnly();
+
+        // Skip through any additional comments and whitespace
+        while (true) {
+          this.skipWhitespaceOnly();
+          const nextComment = this.tryParse(() => this.parseStandaloneComment());
+          if (nextComment) {
+            if (this.cur() === '\n') this.pos++;
+            continue;
+          }
+          break;
+        }
 
         const hasFollowingStep = this.text.startsWith('|>', this.pos);
+
+        // Reset position to after the current comment
+        this.pos = lookAheadPos;
 
         if (hasFollowingStep || steps.length === 0) {
           // Include comment if followed by a step, or if we haven't seen any steps yet
           comments.push(comment);
+          if (this.cur() === '\n') this.pos++;
           continue;
         } else {
           // This comment is not followed by a step and we have steps already,
@@ -1356,15 +1371,30 @@ class Parser {
       const commentPos = this.pos;
       const comment = this.tryParse(() => this.parseStandaloneComment());
       if (comment) {
-        // Look ahead: is there a pipeline step after this comment?
+        // Look ahead: is there a pipeline step after this comment (and any following comments)?
+        const lookAheadPos = this.pos;
         if (this.cur() === '\n') this.pos++;
-        this.skipWhitespaceOnly();
+
+        // Skip through any additional comments and whitespace
+        while (true) {
+          this.skipWhitespaceOnly();
+          const nextComment = this.tryParse(() => this.parseStandaloneComment());
+          if (nextComment) {
+            if (this.cur() === '\n') this.pos++;
+            continue;
+          }
+          break;
+        }
 
         const hasFollowingStep = this.text.startsWith('|>', this.pos);
+
+        // Reset position to after the current comment
+        this.pos = lookAheadPos;
 
         if (hasFollowingStep || steps.length === 0) {
           // Include comment if followed by a step, or if we haven't seen any steps yet
           comments.push(comment);
+          if (this.cur() === '\n') this.pos++;
           continue;
         } else {
           // This comment is not followed by a step and we have steps already,
@@ -2458,7 +2488,7 @@ export function printDescribe(describe: Describe): string {
 
   // Print items in order, tracking when to add blank lines
   let lastType: string | null = null;
-  items.forEach((entry) => {
+  items.forEach((entry, index) => {
     // Add blank line after variables section
     if (lastType === 'variable' && entry.type !== 'variable') {
       lines.push('');
@@ -2476,6 +2506,11 @@ export function printDescribe(describe: Describe): string {
         break;
       case 'mock':
         lines.push(printMock(entry.item));
+        // Add blank line after mock if next item is a mock or comment
+        const nextItem = items[index + 1];
+        if (nextItem && (nextItem.type === 'mock' || nextItem.type === 'comment')) {
+          lines.push('');
+        }
         break;
       case 'comment':
         lines.push(`  ${printComment(entry.item)}`);
@@ -2550,6 +2585,11 @@ export function prettyPrint(program: Program): string {
     const shouldAddBlankLine = () => {
       // Don't add blank line if this is the last item
       if (!nextItem) return false;
+
+      // Describe blocks already include their own trailing blank line
+      if (entry.type === 'describe') {
+        return false;
+      }
 
       // For comments, preserve blank lines based on line gaps in original source
       if (entry.type === 'comment') {
