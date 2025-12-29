@@ -16,7 +16,9 @@ function stripPositions(obj: any): any {
 
   const result: any = {};
   for (const key in obj) {
-    if (key === 'start' || key === 'end' || key === 'fullStart' || key === 'fullEnd') {
+    if (key === 'start' || key === 'end' || key === 'fullStart' || key === 'fullEnd' ||
+        key === 'nameStart' || key === 'nameEnd' || key === 'configStart' || key === 'configEnd' ||
+        key === 'lineNumber') {
       continue; // Skip position properties
     }
     result[key] = stripPositions(obj[key]);
@@ -762,7 +764,8 @@ describe('parseProgram - dispatch step', () => {
     const steps1 = (program1.routes[0].pipeline as any).pipeline.steps;
     const steps2 = (program2.routes[0].pipeline as any).pipeline.steps;
 
-    expect(steps1).toEqual(steps2);
+    // Compare without position data since formatting changes whitespace/positions
+    expect(stripPositions(steps1)).toEqual(stripPositions(steps2));
   });
 
   it('formats dispatch correctly', () => {

@@ -116,6 +116,7 @@ type PipelineRef = {
 };
 interface Pipeline {
     steps: PipelineStep[];
+    comments: Comment[];
     start: number;
     end: number;
 }
@@ -125,6 +126,7 @@ interface LetVariable {
     name: string;
     value: string;
     format: LetValueFormat;
+    lineNumber?: number;
     start: number;
     end: number;
     fullStart: number;
@@ -215,6 +217,7 @@ interface Describe {
     variables: LetVariable[];
     mocks: Mock[];
     tests: It[];
+    comments: Comment[];
     lineNumber?: number;
     inlineComment?: Comment;
     start: number;
@@ -224,6 +227,7 @@ interface Mock {
     target: string;
     targetStart: number;
     returnValue: string;
+    lineNumber?: number;
     start: number;
     end: number;
 }
@@ -237,6 +241,7 @@ interface It {
     headers?: string;
     cookies?: string;
     conditions: Condition[];
+    lineNumber?: number;
     start: number;
     end: number;
 }

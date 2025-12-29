@@ -112,6 +112,7 @@ export type PipelineRef =
 
 export interface Pipeline {
   steps: PipelineStep[];
+  comments: Comment[];
   start: number;
   end: number;
 }
@@ -124,6 +125,7 @@ export interface LetVariable {
   name: string;
   value: string;
   format: LetValueFormat;
+  lineNumber?: number;
   start: number; // Start of the name identifier (for Definition)
   end: number;   // End of the name identifier
   fullStart: number; // Start of 'let' (optional, useful for folding)
@@ -176,6 +178,7 @@ export interface Describe {
   variables: LetVariable[];
   mocks: Mock[];
   tests: It[];
+  comments: Comment[];
   lineNumber?: number;
   inlineComment?: Comment;
   start: number; // Start offset of the describe block
@@ -186,6 +189,7 @@ export interface Mock {
   target: string;
   targetStart: number;
   returnValue: string;
+  lineNumber?: number;
   start: number;
   end: number;
 }
@@ -200,6 +204,7 @@ export interface It {
   headers?: string;
   cookies?: string;
   conditions: Condition[];
+  lineNumber?: number;
   start: number; // Start offset of the test block
   end: number;   // End offset of the test block
 }
@@ -1289,16 +1294,40 @@ class Parser {
   private parseIfPipeline(...stopKeywords: string[]): Pipeline {
     const start = this.pos;
     const steps: PipelineStep[] = [];
+    const comments: Comment[] = [];
+
     while (true) {
       const save = this.pos;
-      this.skipSpaces(); // Skip whitespace AND comments
+      this.skipWhitespaceOnly();
+
+      // Try to parse a comment
+      const commentPos = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (comment) {
+        // Look ahead: is there a pipeline step after this comment?
+        if (this.cur() === '\n') this.pos++;
+        this.skipWhitespaceOnly();
+
+        const hasFollowingStep = this.text.startsWith('|>', this.pos);
+
+        if (hasFollowingStep || steps.length === 0) {
+          // Include comment if followed by a step, or if we haven't seen any steps yet
+          comments.push(comment);
+          continue;
+        } else {
+          // This comment is not followed by a step and we have steps already,
+          // so it doesn't belong to this pipeline
+          this.pos = commentPos;
+          break;
+        }
+      }
 
       // Check if we've hit any of the stop keywords
       for (const keyword of stopKeywords) {
         if (this.text.startsWith(keyword, this.pos)) {
           this.pos = save;
           const end = this.pos;
-          return { steps, start, end };
+          return { steps, comments, start, end };
         }
       }
 
@@ -1312,24 +1341,47 @@ class Parser {
       steps.push(step);
     }
     const end = this.pos;
-    return { steps, start, end };
+    return { steps, comments, start, end };
   }
 
   private parsePipeline(): Pipeline {
     const start = this.pos;
     const steps: PipelineStep[] = [];
+    const comments: Comment[] = [];
+
     while (true) {
-      const save = this.pos;
-      this.skipSpaces(); // Skip whitespace AND comments
+      this.skipWhitespaceOnly();
+
+      // Try to parse a comment
+      const commentPos = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (comment) {
+        // Look ahead: is there a pipeline step after this comment?
+        if (this.cur() === '\n') this.pos++;
+        this.skipWhitespaceOnly();
+
+        const hasFollowingStep = this.text.startsWith('|>', this.pos);
+
+        if (hasFollowingStep || steps.length === 0) {
+          // Include comment if followed by a step, or if we haven't seen any steps yet
+          comments.push(comment);
+          continue;
+        } else {
+          // This comment is not followed by a step and we have steps already,
+          // so it belongs to the program level, not this pipeline
+          this.pos = commentPos;
+          break;
+        }
+      }
+
       if (!this.text.startsWith('|>', this.pos)) {
-        this.pos = save;
         break;
       }
       const step = this.parsePipelineStep();
       steps.push(step);
     }
     const end = this.pos;
-    return { steps, start, end };
+    return { steps, comments, start, end };
   }
 
   private parseNamedPipeline(): NamedPipeline {
@@ -1465,7 +1517,7 @@ class Parser {
     this.skipInlineSpaces();
     const path = this.consumeWhile((c) => c !== ' ' && c !== '\n' && c !== '#');
     const inlineComment = this.parseInlineComment();
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const pipeline = this.parsePipelineRef();
     const end = this.pos;
     this.skipWhitespaceOnly();
@@ -1702,7 +1754,6 @@ class Parser {
   }
 
   private parseMockHead(prefixWord: 'with' | 'and'): Mock {
-    this.skipSpaces();
     const start = this.pos;
     this.expect(prefixWord);
     this.skipInlineSpaces();
@@ -1725,9 +1776,8 @@ class Parser {
     this.expect('returning');
     this.skipInlineSpaces();
     const returnValue = this.parseBacktickString();
-    this.skipSpaces();
     const end = this.pos;
-    return { target, targetStart, returnValue, start, end };
+    return { target, targetStart, returnValue, lineNumber: this.getLineNumber(start), start, end };
   }
 
   private parseMock(): Mock {
@@ -1823,6 +1873,7 @@ class Parser {
       name,
       value,
       format,
+      lineNumber: this.getLineNumber(fullStart),
       start: nameStart,
       end: nameEnd,
       fullStart,
@@ -1963,6 +2014,7 @@ class Parser {
       headers,
       cookies,
       conditions,
+      lineNumber: this.getLineNumber(start),
       start,
       end
     };
@@ -1982,13 +2034,42 @@ class Parser {
     // Set the current describe context for let variable tracking
     this.currentDescribeName = name;
 
-    // Parse let bindings, mocks, and tests in any order
+    // Parse let bindings, mocks, comments, and tests in any order
     const variables: LetVariable[] = [];
     const mocks: Mock[] = [];
     const tests: It[] = [];
+    const comments: Comment[] = [];
 
     while (true) {
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
+
+      // Try to parse a comment
+      const commentPos = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (comment) {
+        // Look ahead: is there a describe-level item after this comment?
+        if (this.cur() === '\n') this.pos++;
+        this.skipWhitespaceOnly();
+
+        // Check if next item is a describe-level item (let, with mock, and mock, it)
+        const hasFollowingItem =
+          this.text.startsWith('let ', this.pos) ||
+          this.text.startsWith('with mock', this.pos) ||
+          this.text.startsWith('and mock', this.pos) ||
+          this.text.startsWith('it ', this.pos) ||
+          this.text.startsWith('it"', this.pos);
+
+        if (hasFollowingItem || (variables.length === 0 && mocks.length === 0 && tests.length === 0)) {
+          // Include comment if followed by a describe item, or if we haven't seen any items yet
+          comments.push(comment);
+          continue;
+        } else {
+          // This comment is not followed by a describe item and we have items already,
+          // so it belongs to the program level, not this describe block
+          this.pos = commentPos;
+          break;
+        }
+      }
 
       // Try to parse a let binding
       const letBinding = this.tryParse(() => this.parseLetBinding());
@@ -2027,7 +2108,7 @@ class Parser {
 
     const end = this.pos;
 
-    return { name, variables, mocks, tests, inlineComment: inlineComment || undefined, start, end };
+    return { name, variables, mocks, tests, comments, inlineComment: inlineComment || undefined, start, end };
   }
 }
 
@@ -2116,9 +2197,30 @@ export function printPipeline(pipeline: NamedPipeline): string {
   } else {
     lines.push(pipelineLine);
   }
+
+  // Collect steps and comments with their positions
+  const items: { type: 'step' | 'comment'; item: any; position: number }[] = [];
+
   pipeline.pipeline.steps.forEach(step => {
-    lines.push(formatPipelineStep(step));
+    items.push({ type: 'step', item: step, position: step.start });
   });
+
+  pipeline.pipeline.comments.forEach(comment => {
+    items.push({ type: 'comment', item: comment, position: comment.lineNumber || 0 });
+  });
+
+  // Sort by position to maintain original order
+  items.sort((a, b) => a.position - b.position);
+
+  // Output in order
+  items.forEach(entry => {
+    if (entry.type === 'step') {
+      lines.push(formatPipelineStep(entry.item));
+    } else {
+      lines.push(`  ${printComment(entry.item)}`);
+    }
+  });
+
   return lines.join('\n');
 }
 
@@ -2131,11 +2233,13 @@ export function printVariable(variable: Variable): string {
 }
 
 export function printGraphQLSchema(schema: GraphQLSchema): string {
-  const schemaLine = `graphql schema = \`${schema.sdl}\``;
-  if (schema.inlineComment) {
-    return `${schemaLine} ${printComment(schema.inlineComment)}`;
-  }
-  return schemaLine;
+  // Format as multiline to preserve readability
+  const firstLine = schema.inlineComment
+    ? `graphqlSchema = \` ${printComment(schema.inlineComment)}`
+    : 'graphqlSchema = `';
+
+  // SDL content already includes its own leading newline/whitespace
+  return `${firstLine}${schema.sdl}\``;
 }
 
 export function printQueryResolver(query: QueryResolver): string {
@@ -2181,30 +2285,69 @@ export function printTypeResolver(resolver: TypeResolver): string {
 }
 
 export function printMock(mock: Mock, indent: string = '  '): string {
-  return `${indent}with mock ${mock.target} returning \`${mock.returnValue}\``;
+  // Convert dot notation to space notation ONLY for GraphQL mocks
+  // (e.g., "query.todos" -> "query todos", "mutation.deleteTodo" -> "mutation deleteTodo")
+  // But preserve dots for other mocks (e.g., "pg.teamsQuery" stays as is)
+  const target = mock.target.replace(/^(query|mutation)\.(.*)$/, '$1 $2');
+  return `${indent}with mock ${target} returning \`${mock.returnValue}\``;
 }
 
 export function printCondition(condition: Condition, indent: string = '    '): string {
   const condType = condition.conditionType.toLowerCase();
 
+  // Smart value formatter that handles template variables properly
+  const formatConditionValue = (val: string): string => {
+    // If already quoted, keep it
+    if (val.startsWith('`') || val.startsWith('"')) return val;
+
+    // Check if it's a bare template variable like {{userId}} or {{world}}
+    const isBareTemplate = /^\{\{[^}]+\}\}$/.test(val);
+    if (isBareTemplate) return val;
+
+    // Check if it contains template variables with other text
+    const hasTemplateVars = /\{\{[^}]+\}\}/.test(val);
+    if (hasTemplateVars) return `"${val}"`;
+
+    // If it contains newlines or looks like JSON/array, use backticks
+    if (val.includes('\n') || (val.includes('{') && val.includes('}')) || (val.includes('[') && val.includes(']'))) {
+      return `\`${val}\``;
+    }
+
+    // For simple strings, use double quotes
+    if (val.includes(' ') || val.includes(',')) return `"${val}"`;
+
+    // Otherwise keep as is (numbers, booleans, etc)
+    return val;
+  };
+
+  // Handle call assertions (e.g., "and call query todos with ...")
+  if (condition.isCallAssertion && condition.callTarget) {
+    const [callType, callName] = condition.callTarget.split('.');
+    return `${indent}${condType} call ${callType} ${callName} ${condition.comparison} ${formatConditionValue(condition.value)}`;
+  }
+
   // Handle selector conditions
   if (condition.field === 'selector' && condition.selector && condition.domAssert) {
     const selector = condition.selector;
-    const formatValue = (val: string): string => {
+
+    // Special formatter for selector text values - always quote if it contains templates
+    const formatSelectorValue = (val: string): string => {
       if (val.startsWith('`') || val.startsWith('"')) return val;
-      if (val.includes('\n') || val.includes('{') || val.includes('[')) return `\`${val}\``;
-      return `"${val}"`;
+      // If contains template variables (even if bare), use double quotes
+      if (/\{\{[^}]+\}\}/.test(val)) return `"${val}"`;
+      // Otherwise use the standard formatter
+      return formatConditionValue(val);
     };
 
     if (condition.domAssert.kind === 'Exists') {
       const operation = condition.comparison === 'exists' ? 'exists' : 'does not exist';
-      return `${indent}${condType} selector "${selector}" ${operation}`;
+      return `${indent}${condType} selector \`${selector}\` ${operation}`;
     } else if (condition.domAssert.kind === 'Text') {
-      return `${indent}${condType} selector "${selector}" text ${condition.comparison} ${formatValue(condition.value)}`;
+      return `${indent}${condType} selector \`${selector}\` text ${condition.comparison} ${formatSelectorValue(condition.value)}`;
     } else if (condition.domAssert.kind === 'Count') {
-      return `${indent}${condType} selector "${selector}" count ${condition.comparison} ${condition.value}`;
+      return `${indent}${condType} selector \`${selector}\` count ${condition.comparison} ${condition.value}`;
     } else if (condition.domAssert.kind === 'Attribute') {
-      return `${indent}${condType} selector "${selector}" attribute "${condition.domAssert.name}" ${condition.comparison} ${formatValue(condition.value)}`;
+      return `${indent}${condType} selector \`${selector}\` attribute "${condition.domAssert.name}" ${condition.comparison} ${formatSelectorValue(condition.value)}`;
     }
   }
 
@@ -2214,10 +2357,7 @@ export function printCondition(condition: Condition, indent: string = '    '): s
     : condition.jqExpr
       ? `${condition.field} \`${condition.jqExpr}\``
       : condition.field;
-  const value = condition.value.startsWith('`') ? condition.value :
-               (condition.value.includes('\n') || condition.value.includes('{') || condition.value.includes('[')) ? `\`${condition.value}\`` :
-               condition.value;
-  return `${indent}${condType} ${fieldPart} ${condition.comparison} ${value}`;
+  return `${indent}${condType} ${fieldPart} ${condition.comparison} ${formatConditionValue(condition.value)}`;
 }
 
 export function printTest(test: It): string {
@@ -2226,10 +2366,9 @@ export function printTest(test: It): string {
   test.mocks.forEach(mock => {
     lines.push(printMock(mock, '    '));
   });
-  lines.push(`    when ${formatWhen(test.when)}`);
 
-  // Print let bindings before with clauses
-  if (test.variables) {
+  // Print let bindings first, before when clause
+  if (test.variables && test.variables.length > 0) {
     test.variables.forEach((variable) => {
       // Format the value based on stored format
       const formattedValue = variable.format === 'quoted'
@@ -2239,19 +2378,34 @@ export function printTest(test: It): string {
         : variable.value;
       lines.push(`    let ${variable.name} = ${formattedValue}`);
     });
+    // Add blank line after let variables
+    lines.push('');
   }
 
-  if (test.input) {
-    lines.push(`    with input \`${test.input}\``);
-  }
-  if (test.body) {
-    lines.push(`    with body \`${test.body}\``);
-  }
+  lines.push(`    when ${formatWhen(test.when)}`);
+
+  // Track whether we've added a "with" clause to know when to use "and with"
+  let hasWithClause = false;
+
+  // Correct order: headers, body, input, cookies
   if (test.headers) {
     lines.push(`    with headers \`${test.headers}\``);
+    hasWithClause = true;
+  }
+  if (test.body) {
+    const prefix = hasWithClause ? 'and with' : 'with';
+    lines.push(`    ${prefix} body \`${test.body}\``);
+    hasWithClause = true;
+  }
+  if (test.input) {
+    const prefix = hasWithClause ? 'and with' : 'with';
+    lines.push(`    ${prefix} input \`${test.input}\``);
+    hasWithClause = true;
   }
   if (test.cookies) {
-    lines.push(`    with cookies \`${test.cookies}\``);
+    const prefix = hasWithClause ? 'and with' : 'with';
+    lines.push(`    ${prefix} cookies \`${test.cookies}\``);
+    hasWithClause = true;
   }
   test.conditions.forEach(condition => {
     lines.push(printCondition(condition));
@@ -2280,29 +2434,63 @@ export function printDescribe(describe: Describe): string {
     lines.push(describeLine);
   }
 
-  // Print describe-level let bindings
-  if (describe.variables && describe.variables.length > 0) {
-    describe.variables.forEach((variable) => {
-      const formattedValue = variable.format === 'quoted'
-        ? `"${variable.value}"`
-        : variable.format === 'backtick'
-        ? `\`${variable.value}\``
-        : variable.value;
-      lines.push(`  let ${variable.name} = ${formattedValue}`);
-    });
-    lines.push('');
-  }
+  // Collect all items with their line numbers for proper ordering
+  const items: { type: string; item: any; lineNumber: number }[] = [];
+
+  describe.variables.forEach(variable => {
+    items.push({ type: 'variable', item: variable, lineNumber: variable.lineNumber || 0 });
+  });
 
   describe.mocks.forEach(mock => {
-    lines.push(printMock(mock));
+    items.push({ type: 'mock', item: mock, lineNumber: mock.lineNumber || 0 });
   });
-  if (describe.mocks.length > 0) {
-    lines.push('');
-  }
+
+  describe.comments.forEach(comment => {
+    items.push({ type: 'comment', item: comment, lineNumber: comment.lineNumber || 0 });
+  });
 
   describe.tests.forEach(test => {
-    lines.push(printTest(test));
-    lines.push('');
+    items.push({ type: 'test', item: test, lineNumber: test.lineNumber || 0 });
+  });
+
+  // Sort by line number to maintain original order
+  items.sort((a, b) => a.lineNumber - b.lineNumber);
+
+  // Print items in order, tracking when to add blank lines
+  let lastType: string | null = null;
+  items.forEach((entry) => {
+    // Add blank line after variables section
+    if (lastType === 'variable' && entry.type !== 'variable') {
+      lines.push('');
+    }
+
+    switch (entry.type) {
+      case 'variable':
+        const variable = entry.item;
+        const formattedValue = variable.format === 'quoted'
+          ? `"${variable.value}"`
+          : variable.format === 'backtick'
+          ? `\`${variable.value}\``
+          : variable.value;
+        lines.push(`  let ${variable.name} = ${formattedValue}`);
+        break;
+      case 'mock':
+        lines.push(printMock(entry.item));
+        break;
+      case 'comment':
+        lines.push(`  ${printComment(entry.item)}`);
+        break;
+      case 'test':
+        // Add blank line before tests if last item wasn't a test
+        if (lastType && lastType !== 'test') {
+          lines.push('');
+        }
+        lines.push(printTest(entry.item));
+        lines.push('');
+        break;
+    }
+
+    lastType = entry.type;
   });
 
   return lines.join('\n').replace(/\n\n$/, '\n');
@@ -2358,48 +2546,65 @@ export function prettyPrint(program: Program): string {
   allItems.sort((a, b) => a.lineNumber - b.lineNumber);
 
   allItems.forEach((entry, index) => {
+    const nextItem = allItems[index + 1];
+    const shouldAddBlankLine = () => {
+      // Don't add blank line if this is the last item
+      if (!nextItem) return false;
+
+      // For comments, preserve blank lines based on line gaps in original source
+      if (entry.type === 'comment') {
+        // Add blank line if there's a line gap > 1 in original source
+        return (nextItem.lineNumber - entry.lineNumber) > 1;
+      }
+
+      // For variables, only add blank line if next item is not a variable
+      if (entry.type === 'variable') {
+        return nextItem.type !== 'variable';
+      }
+
+      // For all other items, add blank line unless next is a comment immediately after
+      if (nextItem.type === 'comment') {
+        return (nextItem.lineNumber - entry.lineNumber) > 1;
+      }
+
+      return true;
+    };
+
     switch (entry.type) {
       case 'comment':
         lines.push(printComment(entry.item));
         break;
       case 'config':
         lines.push(printConfig(entry.item));
-        lines.push('');
         break;
       case 'graphqlSchema':
         lines.push(printGraphQLSchema(entry.item));
-        lines.push('');
         break;
       case 'query':
         lines.push(printQueryResolver(entry.item));
-        lines.push('');
         break;
       case 'mutation':
         lines.push(printMutationResolver(entry.item));
-        lines.push('');
         break;
       case 'resolver':
         lines.push(printTypeResolver(entry.item));
-        lines.push('');
         break;
       case 'route':
         lines.push(printRoute(entry.item));
-        lines.push('');
         break;
       case 'pipeline':
         lines.push(printPipeline(entry.item));
-        lines.push('');
         break;
       case 'variable':
         lines.push(printVariable(entry.item));
-        // Only add empty line if there are more items after this variable
-        const nextNonVariable = allItems.slice(index + 1).find(item => item.type !== 'variable');
-        if (nextNonVariable) lines.push('');
         break;
       case 'describe':
         lines.push(printDescribe(entry.item));
-        lines.push('');
         break;
+    }
+
+    if (shouldAddBlankLine()) {
+      lines.push('');
     }
   });
 
@@ -2461,10 +2666,18 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  '): s
     const lines: string[] = [`${indent}|> dispatch`];
     // Format case branches
     step.branches.forEach(branch => {
-      lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
-      branch.pipeline.steps.forEach(branchStep => {
-        lines.push(formatPipelineStep(branchStep, indent + '    '));
-      });
+      if (branch.pipeline.steps.length === 1) {
+        // Format single-step branches inline (match Rust behavior)
+        const inlineStep = formatPipelineStep(branch.pipeline.steps[0], indent + '    ');
+        const stepContent = inlineStep.substring((indent + '    ').length);
+        lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:   ${stepContent}`);
+      } else {
+        // Multi-step branches on separate lines
+        lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
+        branch.pipeline.steps.forEach(branchStep => {
+          lines.push(formatPipelineStep(branchStep, indent + '    '));
+        });
+      }
     });
     // Format default branch if present
     if (step.default) {
@@ -2535,9 +2748,30 @@ export function formatPipelineRef(ref: PipelineRef): string[] {
     return [`  |> pipeline: ${ref.name}`];
   } else {
     const lines: string[] = [];
+
+    // Collect steps and comments with their positions
+    const items: { type: 'step' | 'comment'; item: any; position: number }[] = [];
+
     ref.pipeline.steps.forEach(step => {
-      lines.push(formatPipelineStep(step));
+      items.push({ type: 'step', item: step, position: step.start });
     });
+
+    ref.pipeline.comments.forEach(comment => {
+      items.push({ type: 'comment', item: comment, position: comment.lineNumber || 0 });
+    });
+
+    // Sort by position to maintain original order
+    items.sort((a, b) => a.position - b.position);
+
+    // Output in order
+    items.forEach(entry => {
+      if (entry.type === 'step') {
+        lines.push(formatPipelineStep(entry.item));
+      } else {
+        lines.push(`  ${printComment(entry.item)}`);
+      }
+    });
+
     return lines;
   }
 }

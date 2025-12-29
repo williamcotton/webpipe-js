@@ -889,14 +889,29 @@ var Parser = class {
   parseIfPipeline(...stopKeywords) {
     const start = this.pos;
     const steps = [];
+    const comments = [];
     while (true) {
       const save = this.pos;
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
+      const commentPos = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (comment) {
+        if (this.cur() === "\n") this.pos++;
+        this.skipWhitespaceOnly();
+        const hasFollowingStep = this.text.startsWith("|>", this.pos);
+        if (hasFollowingStep || steps.length === 0) {
+          comments.push(comment);
+          continue;
+        } else {
+          this.pos = commentPos;
+          break;
+        }
+      }
       for (const keyword of stopKeywords) {
         if (this.text.startsWith(keyword, this.pos)) {
           this.pos = save;
           const end2 = this.pos;
-          return { steps, start, end: end2 };
+          return { steps, comments, start, end: end2 };
         }
       }
       if (!this.text.startsWith("|>", this.pos)) {
@@ -907,23 +922,36 @@ var Parser = class {
       steps.push(step);
     }
     const end = this.pos;
-    return { steps, start, end };
+    return { steps, comments, start, end };
   }
   parsePipeline() {
     const start = this.pos;
     const steps = [];
+    const comments = [];
     while (true) {
-      const save = this.pos;
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
+      const commentPos = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (comment) {
+        if (this.cur() === "\n") this.pos++;
+        this.skipWhitespaceOnly();
+        const hasFollowingStep = this.text.startsWith("|>", this.pos);
+        if (hasFollowingStep || steps.length === 0) {
+          comments.push(comment);
+          continue;
+        } else {
+          this.pos = commentPos;
+          break;
+        }
+      }
       if (!this.text.startsWith("|>", this.pos)) {
-        this.pos = save;
         break;
       }
       const step = this.parsePipelineStep();
       steps.push(step);
     }
     const end = this.pos;
-    return { steps, start, end };
+    return { steps, comments, start, end };
   }
   parseNamedPipeline() {
     const start = this.pos;
@@ -1048,7 +1076,7 @@ var Parser = class {
     this.skipInlineSpaces();
     const path = this.consumeWhile((c) => c !== " " && c !== "\n" && c !== "#");
     const inlineComment = this.parseInlineComment();
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const pipeline = this.parsePipelineRef();
     const end = this.pos;
     this.skipWhitespaceOnly();
@@ -1253,7 +1281,6 @@ var Parser = class {
     return { conditionType: ct, field, headerName: headerName ?? void 0, jqExpr: jqExpr ?? void 0, comparison, value, start, end };
   }
   parseMockHead(prefixWord) {
-    this.skipSpaces();
     const start = this.pos;
     this.expect(prefixWord);
     this.skipInlineSpaces();
@@ -1273,9 +1300,8 @@ var Parser = class {
     this.expect("returning");
     this.skipInlineSpaces();
     const returnValue = this.parseBacktickString();
-    this.skipSpaces();
     const end = this.pos;
-    return { target, targetStart, returnValue, start, end };
+    return { target, targetStart, returnValue, lineNumber: this.getLineNumber(start), start, end };
   }
   parseMock() {
     return this.parseMockHead("with");
@@ -1351,6 +1377,7 @@ var Parser = class {
       name,
       value,
       format,
+      lineNumber: this.getLineNumber(fullStart),
       start: nameStart,
       end: nameEnd,
       fullStart,
@@ -1467,6 +1494,7 @@ var Parser = class {
       headers,
       cookies,
       conditions,
+      lineNumber: this.getLineNumber(start),
       start,
       end
     };
@@ -1485,8 +1513,23 @@ var Parser = class {
     const variables = [];
     const mocks = [];
     const tests = [];
+    const comments = [];
     while (true) {
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
+      const commentPos = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (comment) {
+        if (this.cur() === "\n") this.pos++;
+        this.skipWhitespaceOnly();
+        const hasFollowingItem = this.text.startsWith("let ", this.pos) || this.text.startsWith("with mock", this.pos) || this.text.startsWith("and mock", this.pos) || this.text.startsWith("it ", this.pos) || this.text.startsWith('it"', this.pos);
+        if (hasFollowingItem || variables.length === 0 && mocks.length === 0 && tests.length === 0) {
+          comments.push(comment);
+          continue;
+        } else {
+          this.pos = commentPos;
+          break;
+        }
+      }
       const letBinding = this.tryParse(() => this.parseLetBinding());
       if (letBinding) {
         variables.push(letBinding);
@@ -1511,7 +1554,7 @@ var Parser = class {
     }
     this.currentDescribeName = null;
     const end = this.pos;
-    return { name, variables, mocks, tests, inlineComment: inlineComment || void 0, start, end };
+    return { name, variables, mocks, tests, comments, inlineComment: inlineComment || void 0, start, end };
   }
 };
 function parseProgram(text) {
@@ -1589,8 +1632,20 @@ function printPipeline(pipeline) {
   } else {
     lines.push(pipelineLine);
   }
+  const items = [];
   pipeline.pipeline.steps.forEach((step) => {
-    lines.push(formatPipelineStep(step));
+    items.push({ type: "step", item: step, position: step.start });
+  });
+  pipeline.pipeline.comments.forEach((comment) => {
+    items.push({ type: "comment", item: comment, position: comment.lineNumber || 0 });
+  });
+  items.sort((a, b) => a.position - b.position);
+  items.forEach((entry) => {
+    if (entry.type === "step") {
+      lines.push(formatPipelineStep(entry.item));
+    } else {
+      lines.push(`  ${printComment(entry.item)}`);
+    }
   });
   return lines.join("\n");
 }
@@ -1602,11 +1657,8 @@ function printVariable(variable) {
   return variableLine;
 }
 function printGraphQLSchema(schema) {
-  const schemaLine = `graphql schema = \`${schema.sdl}\``;
-  if (schema.inlineComment) {
-    return `${schemaLine} ${printComment(schema.inlineComment)}`;
-  }
-  return schemaLine;
+  const firstLine = schema.inlineComment ? `graphqlSchema = \` ${printComment(schema.inlineComment)}` : "graphqlSchema = `";
+  return `${firstLine}${schema.sdl}\``;
 }
 function printQueryResolver(query) {
   const lines = [];
@@ -1648,31 +1700,47 @@ function printTypeResolver(resolver) {
   return lines.join("\n");
 }
 function printMock(mock, indent = "  ") {
-  return `${indent}with mock ${mock.target} returning \`${mock.returnValue}\``;
+  const target = mock.target.replace(/^(query|mutation)\.(.*)$/, "$1 $2");
+  return `${indent}with mock ${target} returning \`${mock.returnValue}\``;
 }
 function printCondition(condition, indent = "    ") {
   const condType = condition.conditionType.toLowerCase();
+  const formatConditionValue = (val) => {
+    if (val.startsWith("`") || val.startsWith('"')) return val;
+    const isBareTemplate = /^\{\{[^}]+\}\}$/.test(val);
+    if (isBareTemplate) return val;
+    const hasTemplateVars = /\{\{[^}]+\}\}/.test(val);
+    if (hasTemplateVars) return `"${val}"`;
+    if (val.includes("\n") || val.includes("{") && val.includes("}") || val.includes("[") && val.includes("]")) {
+      return `\`${val}\``;
+    }
+    if (val.includes(" ") || val.includes(",")) return `"${val}"`;
+    return val;
+  };
+  if (condition.isCallAssertion && condition.callTarget) {
+    const [callType, callName] = condition.callTarget.split(".");
+    return `${indent}${condType} call ${callType} ${callName} ${condition.comparison} ${formatConditionValue(condition.value)}`;
+  }
   if (condition.field === "selector" && condition.selector && condition.domAssert) {
     const selector = condition.selector;
-    const formatValue = (val) => {
+    const formatSelectorValue = (val) => {
       if (val.startsWith("`") || val.startsWith('"')) return val;
-      if (val.includes("\n") || val.includes("{") || val.includes("[")) return `\`${val}\``;
-      return `"${val}"`;
+      if (/\{\{[^}]+\}\}/.test(val)) return `"${val}"`;
+      return formatConditionValue(val);
     };
     if (condition.domAssert.kind === "Exists") {
       const operation = condition.comparison === "exists" ? "exists" : "does not exist";
-      return `${indent}${condType} selector "${selector}" ${operation}`;
+      return `${indent}${condType} selector \`${selector}\` ${operation}`;
     } else if (condition.domAssert.kind === "Text") {
-      return `${indent}${condType} selector "${selector}" text ${condition.comparison} ${formatValue(condition.value)}`;
+      return `${indent}${condType} selector \`${selector}\` text ${condition.comparison} ${formatSelectorValue(condition.value)}`;
     } else if (condition.domAssert.kind === "Count") {
-      return `${indent}${condType} selector "${selector}" count ${condition.comparison} ${condition.value}`;
+      return `${indent}${condType} selector \`${selector}\` count ${condition.comparison} ${condition.value}`;
     } else if (condition.domAssert.kind === "Attribute") {
-      return `${indent}${condType} selector "${selector}" attribute "${condition.domAssert.name}" ${condition.comparison} ${formatValue(condition.value)}`;
+      return `${indent}${condType} selector \`${selector}\` attribute "${condition.domAssert.name}" ${condition.comparison} ${formatSelectorValue(condition.value)}`;
     }
   }
   const fieldPart = condition.headerName ? `${condition.field} "${condition.headerName}"` : condition.jqExpr ? `${condition.field} \`${condition.jqExpr}\`` : condition.field;
-  const value = condition.value.startsWith("`") ? condition.value : condition.value.includes("\n") || condition.value.includes("{") || condition.value.includes("[") ? `\`${condition.value}\`` : condition.value;
-  return `${indent}${condType} ${fieldPart} ${condition.comparison} ${value}`;
+  return `${indent}${condType} ${fieldPart} ${condition.comparison} ${formatConditionValue(condition.value)}`;
 }
 function printTest(test) {
   const lines = [];
@@ -1680,24 +1748,33 @@ function printTest(test) {
   test.mocks.forEach((mock) => {
     lines.push(printMock(mock, "    "));
   });
-  lines.push(`    when ${formatWhen(test.when)}`);
-  if (test.variables) {
+  if (test.variables && test.variables.length > 0) {
     test.variables.forEach((variable) => {
       const formattedValue = variable.format === "quoted" ? `"${variable.value}"` : variable.format === "backtick" ? `\`${variable.value}\`` : variable.value;
       lines.push(`    let ${variable.name} = ${formattedValue}`);
     });
+    lines.push("");
   }
-  if (test.input) {
-    lines.push(`    with input \`${test.input}\``);
-  }
-  if (test.body) {
-    lines.push(`    with body \`${test.body}\``);
-  }
+  lines.push(`    when ${formatWhen(test.when)}`);
+  let hasWithClause = false;
   if (test.headers) {
     lines.push(`    with headers \`${test.headers}\``);
+    hasWithClause = true;
+  }
+  if (test.body) {
+    const prefix = hasWithClause ? "and with" : "with";
+    lines.push(`    ${prefix} body \`${test.body}\``);
+    hasWithClause = true;
+  }
+  if (test.input) {
+    const prefix = hasWithClause ? "and with" : "with";
+    lines.push(`    ${prefix} input \`${test.input}\``);
+    hasWithClause = true;
   }
   if (test.cookies) {
-    lines.push(`    with cookies \`${test.cookies}\``);
+    const prefix = hasWithClause ? "and with" : "with";
+    lines.push(`    ${prefix} cookies \`${test.cookies}\``);
+    hasWithClause = true;
   }
   test.conditions.forEach((condition) => {
     lines.push(printCondition(condition));
@@ -1721,22 +1798,46 @@ function printDescribe(describe) {
   } else {
     lines.push(describeLine);
   }
-  if (describe.variables && describe.variables.length > 0) {
-    describe.variables.forEach((variable) => {
-      const formattedValue = variable.format === "quoted" ? `"${variable.value}"` : variable.format === "backtick" ? `\`${variable.value}\`` : variable.value;
-      lines.push(`  let ${variable.name} = ${formattedValue}`);
-    });
-    lines.push("");
-  }
-  describe.mocks.forEach((mock) => {
-    lines.push(printMock(mock));
+  const items = [];
+  describe.variables.forEach((variable) => {
+    items.push({ type: "variable", item: variable, lineNumber: variable.lineNumber || 0 });
   });
-  if (describe.mocks.length > 0) {
-    lines.push("");
-  }
+  describe.mocks.forEach((mock) => {
+    items.push({ type: "mock", item: mock, lineNumber: mock.lineNumber || 0 });
+  });
+  describe.comments.forEach((comment) => {
+    items.push({ type: "comment", item: comment, lineNumber: comment.lineNumber || 0 });
+  });
   describe.tests.forEach((test) => {
-    lines.push(printTest(test));
-    lines.push("");
+    items.push({ type: "test", item: test, lineNumber: test.lineNumber || 0 });
+  });
+  items.sort((a, b) => a.lineNumber - b.lineNumber);
+  let lastType = null;
+  items.forEach((entry) => {
+    if (lastType === "variable" && entry.type !== "variable") {
+      lines.push("");
+    }
+    switch (entry.type) {
+      case "variable":
+        const variable = entry.item;
+        const formattedValue = variable.format === "quoted" ? `"${variable.value}"` : variable.format === "backtick" ? `\`${variable.value}\`` : variable.value;
+        lines.push(`  let ${variable.name} = ${formattedValue}`);
+        break;
+      case "mock":
+        lines.push(printMock(entry.item));
+        break;
+      case "comment":
+        lines.push(`  ${printComment(entry.item)}`);
+        break;
+      case "test":
+        if (lastType && lastType !== "test") {
+          lines.push("");
+        }
+        lines.push(printTest(entry.item));
+        lines.push("");
+        break;
+    }
+    lastType = entry.type;
   });
   return lines.join("\n").replace(/\n\n$/, "\n");
 }
@@ -1775,47 +1876,54 @@ function prettyPrint(program) {
   });
   allItems.sort((a, b) => a.lineNumber - b.lineNumber);
   allItems.forEach((entry, index) => {
+    const nextItem = allItems[index + 1];
+    const shouldAddBlankLine = () => {
+      if (!nextItem) return false;
+      if (entry.type === "comment") {
+        return nextItem.lineNumber - entry.lineNumber > 1;
+      }
+      if (entry.type === "variable") {
+        return nextItem.type !== "variable";
+      }
+      if (nextItem.type === "comment") {
+        return nextItem.lineNumber - entry.lineNumber > 1;
+      }
+      return true;
+    };
     switch (entry.type) {
       case "comment":
         lines.push(printComment(entry.item));
         break;
       case "config":
         lines.push(printConfig(entry.item));
-        lines.push("");
         break;
       case "graphqlSchema":
         lines.push(printGraphQLSchema(entry.item));
-        lines.push("");
         break;
       case "query":
         lines.push(printQueryResolver(entry.item));
-        lines.push("");
         break;
       case "mutation":
         lines.push(printMutationResolver(entry.item));
-        lines.push("");
         break;
       case "resolver":
         lines.push(printTypeResolver(entry.item));
-        lines.push("");
         break;
       case "route":
         lines.push(printRoute(entry.item));
-        lines.push("");
         break;
       case "pipeline":
         lines.push(printPipeline(entry.item));
-        lines.push("");
         break;
       case "variable":
         lines.push(printVariable(entry.item));
-        const nextNonVariable = allItems.slice(index + 1).find((item) => item.type !== "variable");
-        if (nextNonVariable) lines.push("");
         break;
       case "describe":
         lines.push(printDescribe(entry.item));
-        lines.push("");
         break;
+    }
+    if (shouldAddBlankLine()) {
+      lines.push("");
     }
   });
   return lines.join("\n").trim() + "\n";
@@ -1867,10 +1975,16 @@ function formatPipelineStep(step, indent = "  ") {
   } else if (step.kind === "Dispatch") {
     const lines = [`${indent}|> dispatch`];
     step.branches.forEach((branch) => {
-      lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
-      branch.pipeline.steps.forEach((branchStep) => {
-        lines.push(formatPipelineStep(branchStep, indent + "    "));
-      });
+      if (branch.pipeline.steps.length === 1) {
+        const inlineStep = formatPipelineStep(branch.pipeline.steps[0], indent + "    ");
+        const stepContent = inlineStep.substring((indent + "    ").length);
+        lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:   ${stepContent}`);
+      } else {
+        lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
+        branch.pipeline.steps.forEach((branchStep) => {
+          lines.push(formatPipelineStep(branchStep, indent + "    "));
+        });
+      }
     });
     if (step.default) {
       lines.push(`${indent}  default:`);
@@ -1930,8 +2044,20 @@ function formatPipelineRef(ref) {
     return [`  |> pipeline: ${ref.name}`];
   } else {
     const lines = [];
+    const items = [];
     ref.pipeline.steps.forEach((step) => {
-      lines.push(formatPipelineStep(step));
+      items.push({ type: "step", item: step, position: step.start });
+    });
+    ref.pipeline.comments.forEach((comment) => {
+      items.push({ type: "comment", item: comment, position: comment.lineNumber || 0 });
+    });
+    items.sort((a, b) => a.position - b.position);
+    items.forEach((entry) => {
+      if (entry.type === "step") {
+        lines.push(formatPipelineStep(entry.item));
+      } else {
+        lines.push(`  ${printComment(entry.item)}`);
+      }
     });
     return lines;
   }
