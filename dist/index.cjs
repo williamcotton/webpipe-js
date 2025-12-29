@@ -39,6 +39,7 @@ __export(index_exports, {
   printCondition: () => printCondition,
   printConfig: () => printConfig,
   printDescribe: () => printDescribe,
+  printFeatureFlags: () => printFeatureFlags,
   printGraphQLSchema: () => printGraphQLSchema,
   printMock: () => printMock,
   printMutationResolver: () => printMutationResolver,
@@ -131,7 +132,8 @@ var Parser = class {
         type: "standalone",
         text: restOfLine,
         style: "#",
-        lineNumber: this.getLineNumber(start)
+        lineNumber: this.getLineNumber(start),
+        start
       };
     }
     if (this.text.startsWith("//", this.pos)) {
@@ -141,7 +143,8 @@ var Parser = class {
         type: "standalone",
         text,
         style: "//",
-        lineNumber: this.getLineNumber(start)
+        lineNumber: this.getLineNumber(start),
+        start
       };
     }
     return null;
@@ -773,15 +776,15 @@ var Parser = class {
     const condition = this.parseIfPipeline("then:");
     this.skipSpaces();
     this.expect("then:");
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const thenBranch = this.parseIfPipeline("else:", "end");
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const elseBranch = this.tryParse(() => {
       this.expect("else:");
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
       return this.parseIfPipeline("end");
     });
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     this.tryParse(() => {
       this.expect("end");
       return true;
@@ -908,8 +911,15 @@ var Parser = class {
           break;
         }
         const hasFollowingStep = this.text.startsWith("|>", this.pos);
+        let hasStopKeyword = false;
+        for (const keyword of stopKeywords) {
+          if (this.text.startsWith(keyword, this.pos)) {
+            hasStopKeyword = true;
+            break;
+          }
+        }
         this.pos = lookAheadPos;
-        if (hasFollowingStep || steps.length === 0) {
+        if (hasFollowingStep || hasStopKeyword || steps.length === 0) {
           comments.push(comment);
           if (this.cur() === "\n") this.pos++;
           continue;
@@ -1659,7 +1669,7 @@ function printPipeline(pipeline) {
     items.push({ type: "step", item: step, position: step.start });
   });
   pipeline.pipeline.comments.forEach((comment) => {
-    items.push({ type: "comment", item: comment, position: comment.lineNumber || 0 });
+    items.push({ type: "comment", item: comment, position: comment.start || 0 });
   });
   items.sort((a, b) => a.position - b.position);
   items.forEach((entry) => {
@@ -1721,6 +1731,26 @@ function printTypeResolver(resolver) {
   });
   return lines.join("\n");
 }
+function printFeatureFlags(pipeline) {
+  const lines = [];
+  lines.push("featureFlags =");
+  const items = [];
+  pipeline.steps.forEach((step) => {
+    items.push({ type: "step", item: step, position: step.start });
+  });
+  pipeline.comments.forEach((comment) => {
+    items.push({ type: "comment", item: comment, position: comment.start || 0 });
+  });
+  items.sort((a, b) => a.position - b.position);
+  items.forEach((entry) => {
+    if (entry.type === "step") {
+      lines.push(formatPipelineStep(entry.item));
+    } else {
+      lines.push(`  ${printComment(entry.item)}`);
+    }
+  });
+  return lines.join("\n");
+}
 function printMock(mock, indent = "  ") {
   const target = mock.target.replace(/^(query|mutation)\.(.*)$/, "$1 $2");
   return `${indent}with mock ${target} returning \`${mock.returnValue}\``;
@@ -1767,9 +1797,6 @@ function printCondition(condition, indent = "    ") {
 function printTest(test) {
   const lines = [];
   lines.push(`  it "${test.name}"`);
-  test.mocks.forEach((mock) => {
-    lines.push(printMock(mock, "    "));
-  });
   if (test.variables && test.variables.length > 0) {
     test.variables.forEach((variable) => {
       const formattedValue = variable.format === "quoted" ? `"${variable.value}"` : variable.format === "backtick" ? `\`${variable.value}\`` : variable.value;
@@ -1779,18 +1806,25 @@ function printTest(test) {
   }
   lines.push(`    when ${formatWhen(test.when)}`);
   let hasWithClause = false;
+  if (test.input) {
+    lines.push(`    with input \`${test.input}\``);
+    hasWithClause = true;
+  }
+  test.mocks.forEach((mock) => {
+    const prefix = hasWithClause ? "and" : "with";
+    const mockLine = printMock(mock, "    ");
+    const mockContent = mockLine.trim().replace(/^(with|and)\s+/, "");
+    lines.push(`    ${prefix} ${mockContent}`);
+    hasWithClause = true;
+  });
   if (test.headers) {
-    lines.push(`    with headers \`${test.headers}\``);
+    const prefix = hasWithClause ? "and with" : "with";
+    lines.push(`    ${prefix} headers \`${test.headers}\``);
     hasWithClause = true;
   }
   if (test.body) {
     const prefix = hasWithClause ? "and with" : "with";
     lines.push(`    ${prefix} body \`${test.body}\``);
-    hasWithClause = true;
-  }
-  if (test.input) {
-    const prefix = hasWithClause ? "and with" : "with";
-    lines.push(`    ${prefix} input \`${test.input}\``);
     hasWithClause = true;
   }
   if (test.cookies) {
@@ -1894,6 +1928,9 @@ function prettyPrint(program) {
   program.variables.forEach((variable) => {
     allItems.push({ type: "variable", item: variable, lineNumber: variable.lineNumber || 0 });
   });
+  if (program.featureFlags) {
+    allItems.push({ type: "featureFlags", item: program.featureFlags, lineNumber: program.featureFlags.start || 0 });
+  }
   program.describes.forEach((describe) => {
     allItems.push({ type: "describe", item: describe, lineNumber: describe.lineNumber || 0 });
   });
@@ -1947,6 +1984,9 @@ function prettyPrint(program) {
       case "variable":
         lines.push(printVariable(entry.item));
         break;
+      case "featureFlags":
+        lines.push(printFeatureFlags(entry.item));
+        break;
       case "describe":
         lines.push(printDescribe(entry.item));
         break;
@@ -1969,7 +2009,7 @@ function formatConfigValue(value) {
       return value.value.toString();
   }
 }
-function formatPipelineStep(step, indent = "  ") {
+function formatPipelineStep(step, indent = "  ", isLastStep = false) {
   if (step.kind === "Regular") {
     const argsPart = step.args.length > 0 ? `(${step.args.join(", ")})` : "";
     const configPart = formatStepConfig(step.config, step.configType);
@@ -1987,18 +2027,57 @@ function formatPipelineStep(step, indent = "  ") {
     return lines.join("\n");
   } else if (step.kind === "If") {
     const lines = [`${indent}|> if`];
-    step.condition.steps.forEach((condStep) => {
-      lines.push(formatPipelineStep(condStep, indent + "  "));
+    const conditionItems = [];
+    step.condition.steps.forEach((s) => {
+      conditionItems.push({ type: "step", item: s, position: s.start });
+    });
+    step.condition.comments.forEach((c) => {
+      conditionItems.push({ type: "comment", item: c, position: c.start || 0 });
+    });
+    conditionItems.sort((a, b) => a.position - b.position);
+    conditionItems.forEach((entry) => {
+      if (entry.type === "step") {
+        lines.push(formatPipelineStep(entry.item, indent + "  "));
+      } else {
+        lines.push(`${indent}  ${printComment(entry.item)}`);
+      }
     });
     lines.push(`${indent}  then:`);
-    step.thenBranch.steps.forEach((thenStep) => {
-      lines.push(formatPipelineStep(thenStep, indent + "    "));
+    const thenItems = [];
+    step.thenBranch.steps.forEach((s) => {
+      thenItems.push({ type: "step", item: s, position: s.start });
+    });
+    step.thenBranch.comments.forEach((c) => {
+      thenItems.push({ type: "comment", item: c, position: c.start || 0 });
+    });
+    thenItems.sort((a, b) => a.position - b.position);
+    thenItems.forEach((entry) => {
+      if (entry.type === "step") {
+        lines.push(formatPipelineStep(entry.item, indent + "    "));
+      } else {
+        lines.push(`${indent}    ${printComment(entry.item)}`);
+      }
     });
     if (step.elseBranch) {
       lines.push(`${indent}  else:`);
-      step.elseBranch.steps.forEach((elseStep) => {
-        lines.push(formatPipelineStep(elseStep, indent + "    "));
+      const elseItems = [];
+      step.elseBranch.steps.forEach((s) => {
+        elseItems.push({ type: "step", item: s, position: s.start });
       });
+      step.elseBranch.comments.forEach((c) => {
+        elseItems.push({ type: "comment", item: c, position: c.start || 0 });
+      });
+      elseItems.sort((a, b) => a.position - b.position);
+      elseItems.forEach((entry) => {
+        if (entry.type === "step") {
+          lines.push(formatPipelineStep(entry.item, indent + "    "));
+        } else {
+          lines.push(`${indent}    ${printComment(entry.item)}`);
+        }
+      });
+    }
+    if (!isLastStep) {
+      lines.push(`${indent}end`);
     }
     return lines.join("\n");
   } else if (step.kind === "Dispatch") {
@@ -2078,12 +2157,20 @@ function formatPipelineRef(ref) {
       items.push({ type: "step", item: step, position: step.start });
     });
     ref.pipeline.comments.forEach((comment) => {
-      items.push({ type: "comment", item: comment, position: comment.lineNumber || 0 });
+      items.push({ type: "comment", item: comment, position: comment.start || 0 });
     });
     items.sort((a, b) => a.position - b.position);
-    items.forEach((entry) => {
+    let lastStepIndex = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].type === "step") {
+        lastStepIndex = i;
+        break;
+      }
+    }
+    items.forEach((entry, index) => {
       if (entry.type === "step") {
-        lines.push(formatPipelineStep(entry.item));
+        const isLastStep = index === lastStepIndex;
+        lines.push(formatPipelineStep(entry.item, "  ", isLastStep));
       } else {
         lines.push(`  ${printComment(entry.item)}`);
       }
@@ -2122,6 +2209,7 @@ function formatWhen(when) {
   printCondition,
   printConfig,
   printDescribe,
+  printFeatureFlags,
   printGraphQLSchema,
   printMock,
   printMutationResolver,

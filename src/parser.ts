@@ -17,6 +17,7 @@ export interface Comment {
   text: string;
   style: '#' | '//';
   lineNumber?: number;
+  start?: number;
 }
 
 export interface Config {
@@ -339,7 +340,7 @@ class Parser {
 
   private parseStandaloneComment(): Comment | null {
     const start = this.pos;
-    
+
     if (this.text.startsWith('#', this.pos)) {
       const originalPos = this.pos;
       this.pos++; // Skip first #
@@ -349,10 +350,11 @@ class Parser {
         type: 'standalone',
         text: restOfLine,
         style: '#',
-        lineNumber: this.getLineNumber(start)
+        lineNumber: this.getLineNumber(start),
+        start
       };
     }
-    
+
     if (this.text.startsWith('//', this.pos)) {
       this.pos += 2; // Skip //
       const text = this.consumeWhile((ch) => ch !== '\n');
@@ -360,7 +362,8 @@ class Parser {
         type: 'standalone',
         text: text,
         style: '//',
-        lineNumber: this.getLineNumber(start)
+        lineNumber: this.getLineNumber(start),
+        start
       };
     }
     
@@ -1146,21 +1149,21 @@ class Parser {
 
     this.skipSpaces();
     this.expect('then:');
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
 
     // Parse then branch (stops when it sees 'else:' or 'end' or non-pipeline content)
     const thenBranch = this.parseIfPipeline('else:', 'end');
 
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
 
     // Check for optional else branch
     const elseBranch = this.tryParse(() => {
       this.expect('else:');
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
       return this.parseIfPipeline('end');
     });
 
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
 
     // Check for optional 'end' keyword
     this.tryParse(() => {
@@ -1304,7 +1307,7 @@ class Parser {
       const commentPos = this.pos;
       const comment = this.tryParse(() => this.parseStandaloneComment());
       if (comment) {
-        // Look ahead: is there a pipeline step after this comment (and any following comments)?
+        // Look ahead: is there a pipeline step or stop keyword after this comment (and any following comments)?
         const lookAheadPos = this.pos;
         if (this.cur() === '\n') this.pos++;
 
@@ -1321,16 +1324,25 @@ class Parser {
 
         const hasFollowingStep = this.text.startsWith('|>', this.pos);
 
+        // Check if we're about to hit a stop keyword
+        let hasStopKeyword = false;
+        for (const keyword of stopKeywords) {
+          if (this.text.startsWith(keyword, this.pos)) {
+            hasStopKeyword = true;
+            break;
+          }
+        }
+
         // Reset position to after the current comment
         this.pos = lookAheadPos;
 
-        if (hasFollowingStep || steps.length === 0) {
-          // Include comment if followed by a step, or if we haven't seen any steps yet
+        if (hasFollowingStep || hasStopKeyword || steps.length === 0) {
+          // Include comment if followed by a step, stop keyword, or if we haven't seen any steps yet
           comments.push(comment);
           if (this.cur() === '\n') this.pos++;
           continue;
         } else {
-          // This comment is not followed by a step and we have steps already,
+          // This comment is not followed by a step or stop keyword and we have steps already,
           // so it doesn't belong to this pipeline
           this.pos = commentPos;
           break;
@@ -2236,7 +2248,7 @@ export function printPipeline(pipeline: NamedPipeline): string {
   });
 
   pipeline.pipeline.comments.forEach(comment => {
-    items.push({ type: 'comment', item: comment, position: comment.lineNumber || 0 });
+    items.push({ type: 'comment', item: comment, position: comment.start || 0 });
   });
 
   // Sort by position to maintain original order
@@ -2311,6 +2323,36 @@ export function printTypeResolver(resolver: TypeResolver): string {
   resolver.pipeline.steps.forEach(step => {
     lines.push(formatPipelineStep(step));
   });
+  return lines.join('\n');
+}
+
+export function printFeatureFlags(pipeline: Pipeline): string {
+  const lines: string[] = [];
+  lines.push('featureFlags =');
+
+  // Collect steps and comments with their positions
+  const items: { type: 'step' | 'comment'; item: any; position: number }[] = [];
+
+  pipeline.steps.forEach(step => {
+    items.push({ type: 'step', item: step, position: step.start });
+  });
+
+  pipeline.comments.forEach(comment => {
+    items.push({ type: 'comment', item: comment, position: comment.start || 0 });
+  });
+
+  // Sort by position to maintain original order
+  items.sort((a, b) => a.position - b.position);
+
+  // Output in order
+  items.forEach(entry => {
+    if (entry.type === 'step') {
+      lines.push(formatPipelineStep(entry.item));
+    } else {
+      lines.push(`  ${printComment(entry.item)}`);
+    }
+  });
+
   return lines.join('\n');
 }
 
@@ -2393,9 +2435,6 @@ export function printCondition(condition: Condition, indent: string = '    '): s
 export function printTest(test: It): string {
   const lines: string[] = [];
   lines.push(`  it "${test.name}"`);
-  test.mocks.forEach(mock => {
-    lines.push(printMock(mock, '    '));
-  });
 
   // Print let bindings first, before when clause
   if (test.variables && test.variables.length > 0) {
@@ -2417,19 +2456,30 @@ export function printTest(test: It): string {
   // Track whether we've added a "with" clause to know when to use "and with"
   let hasWithClause = false;
 
-  // Correct order: headers, body, input, cookies
+  // Correct order: input, mocks, headers, body, cookies
+  if (test.input) {
+    lines.push(`    with input \`${test.input}\``);
+    hasWithClause = true;
+  }
+
+  // Print mocks after input
+  test.mocks.forEach(mock => {
+    const prefix = hasWithClause ? 'and' : 'with';
+    const mockLine = printMock(mock, '    ');
+    // Replace the indentation with proper prefix
+    const mockContent = mockLine.trim().replace(/^(with|and)\s+/, '');
+    lines.push(`    ${prefix} ${mockContent}`);
+    hasWithClause = true;
+  });
+
   if (test.headers) {
-    lines.push(`    with headers \`${test.headers}\``);
+    const prefix = hasWithClause ? 'and with' : 'with';
+    lines.push(`    ${prefix} headers \`${test.headers}\``);
     hasWithClause = true;
   }
   if (test.body) {
     const prefix = hasWithClause ? 'and with' : 'with';
     lines.push(`    ${prefix} body \`${test.body}\``);
-    hasWithClause = true;
-  }
-  if (test.input) {
-    const prefix = hasWithClause ? 'and with' : 'with';
-    lines.push(`    ${prefix} input \`${test.input}\``);
     hasWithClause = true;
   }
   if (test.cookies) {
@@ -2569,6 +2619,10 @@ export function prettyPrint(program: Program): string {
     allItems.push({ type: 'variable', item: variable, lineNumber: variable.lineNumber || 0 });
   });
 
+  if (program.featureFlags) {
+    allItems.push({ type: 'featureFlags', item: program.featureFlags, lineNumber: program.featureFlags.start || 0 });
+  }
+
   program.describes.forEach(describe => {
     allItems.push({ type: 'describe', item: describe, lineNumber: describe.lineNumber || 0 });
   });
@@ -2638,6 +2692,9 @@ export function prettyPrint(program: Program): string {
       case 'variable':
         lines.push(printVariable(entry.item));
         break;
+      case 'featureFlags':
+        lines.push(printFeatureFlags(entry.item));
+        break;
       case 'describe':
         lines.push(printDescribe(entry.item));
         break;
@@ -2664,7 +2721,7 @@ export function formatConfigValue(value: ConfigValue): string {
   }
 }
 
-export function formatPipelineStep(step: PipelineStep, indent: string = '  '): string {
+export function formatPipelineStep(step: PipelineStep, indent: string = '  ', isLastStep: boolean = false): string {
   if (step.kind === 'Regular') {
     const argsPart = step.args.length > 0 ? `(${step.args.join(', ')})` : '';
     const configPart = formatStepConfig(step.config, step.configType);
@@ -2684,21 +2741,65 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  '): s
     return lines.join('\n');
   } else if (step.kind === 'If') {
     const lines: string[] = [`${indent}|> if`];
-    // Format condition pipeline
-    step.condition.steps.forEach(condStep => {
-      lines.push(formatPipelineStep(condStep, indent + '  '));
+
+    // Format condition pipeline with comments
+    const conditionItems: { type: 'step' | 'comment'; item: any; position: number }[] = [];
+    step.condition.steps.forEach(s => {
+      conditionItems.push({ type: 'step', item: s, position: s.start });
     });
+    step.condition.comments.forEach(c => {
+      conditionItems.push({ type: 'comment', item: c, position: c.start || 0 });
+    });
+    conditionItems.sort((a, b) => a.position - b.position);
+    conditionItems.forEach(entry => {
+      if (entry.type === 'step') {
+        lines.push(formatPipelineStep(entry.item, indent + '  '));
+      } else {
+        lines.push(`${indent}  ${printComment(entry.item)}`);
+      }
+    });
+
     // Format then branch
     lines.push(`${indent}  then:`);
-    step.thenBranch.steps.forEach(thenStep => {
-      lines.push(formatPipelineStep(thenStep, indent + '    '));
+    const thenItems: { type: 'step' | 'comment'; item: any; position: number }[] = [];
+    step.thenBranch.steps.forEach(s => {
+      thenItems.push({ type: 'step', item: s, position: s.start });
     });
+    step.thenBranch.comments.forEach(c => {
+      thenItems.push({ type: 'comment', item: c, position: c.start || 0 });
+    });
+    thenItems.sort((a, b) => a.position - b.position);
+    thenItems.forEach(entry => {
+      if (entry.type === 'step') {
+        lines.push(formatPipelineStep(entry.item, indent + '    '));
+      } else {
+        lines.push(`${indent}    ${printComment(entry.item)}`);
+      }
+    });
+
     // Format else branch if present
     if (step.elseBranch) {
       lines.push(`${indent}  else:`);
-      step.elseBranch.steps.forEach(elseStep => {
-        lines.push(formatPipelineStep(elseStep, indent + '    '));
+      const elseItems: { type: 'step' | 'comment'; item: any; position: number }[] = [];
+      step.elseBranch.steps.forEach(s => {
+        elseItems.push({ type: 'step', item: s, position: s.start });
       });
+      step.elseBranch.comments.forEach(c => {
+        elseItems.push({ type: 'comment', item: c, position: c.start || 0 });
+      });
+      elseItems.sort((a, b) => a.position - b.position);
+      elseItems.forEach(entry => {
+        if (entry.type === 'step') {
+          lines.push(formatPipelineStep(entry.item, indent + '    '));
+        } else {
+          lines.push(`${indent}    ${printComment(entry.item)}`);
+        }
+      });
+    }
+
+    // Add end keyword if not the last step
+    if (!isLastStep) {
+      lines.push(`${indent}end`);
     }
     return lines.join('\n');
   } else if (step.kind === 'Dispatch') {
@@ -2797,16 +2898,26 @@ export function formatPipelineRef(ref: PipelineRef): string[] {
     });
 
     ref.pipeline.comments.forEach(comment => {
-      items.push({ type: 'comment', item: comment, position: comment.lineNumber || 0 });
+      items.push({ type: 'comment', item: comment, position: comment.start || 0 });
     });
 
     // Sort by position to maintain original order
     items.sort((a, b) => a.position - b.position);
 
+    // Find the index of the last step (ignoring comments)
+    let lastStepIndex = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].type === 'step') {
+        lastStepIndex = i;
+        break;
+      }
+    }
+
     // Output in order
-    items.forEach(entry => {
+    items.forEach((entry, index) => {
       if (entry.type === 'step') {
-        lines.push(formatPipelineStep(entry.item));
+        const isLastStep = index === lastStepIndex;
+        lines.push(formatPipelineStep(entry.item, '  ', isLastStep));
       } else {
         lines.push(`  ${printComment(entry.item)}`);
       }
