@@ -637,7 +637,7 @@ class Parser {
     if (bt !== null) return { config: bt, configType: 'backtick' };
     const dq = this.tryParse(() => this.parseQuotedString());
     if (dq !== null) return { config: dq, configType: 'quoted' };
-    const id = this.tryParse(() => this.parseIdentifier());
+    const id = this.tryParse(() => this.parseScopedIdentifier());
     if (id !== null) return { config: id, configType: 'identifier' };
     throw new ParseFailure('step-config', this.pos);
   }
