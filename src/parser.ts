@@ -1,5 +1,13 @@
+export interface Import {
+  path: string;
+  alias: string;
+  start: number;
+  end: number;
+}
+
 export interface Program {
   configs: Config[];
+  imports: Import[];
   pipelines: NamedPipeline[];
   variables: Variable[];
   routes: Route[];
@@ -375,6 +383,7 @@ class Parser {
     this.skipWhitespaceOnly();
 
     const configs: Config[] = [];
+    const imports: Import[] = [];
     const pipelines: NamedPipeline[] = [];
     const variables: Variable[] = [];
     const routes: Route[] = [];
@@ -404,6 +413,17 @@ class Parser {
       if (cfg) {
         cfg.lineNumber = this.getLineNumber(start);
         configs.push(cfg);
+        continue;
+      }
+
+      const importStmt = this.tryParse(() => this.parseImport());
+      if (importStmt) {
+        // Check for duplicate aliases
+        const duplicateAlias = imports.find(i => i.alias === importStmt.alias);
+        if (duplicateAlias) {
+          this.report(`Duplicate import alias '${importStmt.alias}'`, importStmt.start, importStmt.end, 'error');
+        }
+        imports.push(importStmt);
         continue;
       }
 
@@ -486,7 +506,7 @@ class Parser {
       this.report('Unclosed backtick-delimited string', start, start + 1, 'warning');
     }
 
-    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, resolvers, featureFlags };
+    return { configs, imports, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, resolvers, featureFlags };
   }
 
   private eof(): boolean { return this.pos >= this.len; }
@@ -778,6 +798,32 @@ class Parser {
     this.skipWhitespaceOnly();
     const end = this.pos;
     return { name, properties, inlineComment: inlineComment || undefined, start, end };
+  }
+
+  private parseImport(): Import {
+    const start = this.pos;
+    this.expect('import');
+    this.skipInlineSpaces();
+    this.expect('"');
+    const path = this.consumeWhile((c) => c !== '"');
+    this.expect('"');
+    this.skipInlineSpaces();
+    this.expect('as');
+    this.skipInlineSpaces();
+    const alias = this.parseIdentifier();
+    this.skipWhitespaceOnly();
+    const end = this.pos;
+    return { path, alias, start, end };
+  }
+
+  private parseScopedIdentifier(): string {
+    const first = this.parseIdentifier();
+    if (this.text.startsWith('::', this.pos)) {
+      this.pos += 2;
+      const second = this.parseIdentifier();
+      return `${first}::${second}`;
+    }
+    return first;
   }
 
   private parsePipelineStep(): PipelineStep {

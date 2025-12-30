@@ -152,6 +152,7 @@ var Parser = class {
   parseProgram() {
     this.skipWhitespaceOnly();
     const configs = [];
+    const imports = [];
     const pipelines = [];
     const variables = [];
     const routes = [];
@@ -176,6 +177,15 @@ var Parser = class {
       if (cfg) {
         cfg.lineNumber = this.getLineNumber(start);
         configs.push(cfg);
+        continue;
+      }
+      const importStmt = this.tryParse(() => this.parseImport());
+      if (importStmt) {
+        const duplicateAlias = imports.find((i) => i.alias === importStmt.alias);
+        if (duplicateAlias) {
+          this.report(`Duplicate import alias '${importStmt.alias}'`, importStmt.start, importStmt.end, "error");
+        }
+        imports.push(importStmt);
         continue;
       }
       const schema = this.tryParse(() => this.parseGraphQLSchema());
@@ -246,7 +256,7 @@ var Parser = class {
       const start = Math.max(0, idx);
       this.report("Unclosed backtick-delimited string", start, start + 1, "warning");
     }
-    return { configs, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, resolvers, featureFlags };
+    return { configs, imports, pipelines, variables, routes, describes, comments, graphqlSchema, queries, mutations, resolvers, featureFlags };
   }
   eof() {
     return this.pos >= this.len;
@@ -488,6 +498,30 @@ var Parser = class {
     this.skipWhitespaceOnly();
     const end = this.pos;
     return { name, properties, inlineComment: inlineComment || void 0, start, end };
+  }
+  parseImport() {
+    const start = this.pos;
+    this.expect("import");
+    this.skipInlineSpaces();
+    this.expect('"');
+    const path = this.consumeWhile((c) => c !== '"');
+    this.expect('"');
+    this.skipInlineSpaces();
+    this.expect("as");
+    this.skipInlineSpaces();
+    const alias = this.parseIdentifier();
+    this.skipWhitespaceOnly();
+    const end = this.pos;
+    return { path, alias, start, end };
+  }
+  parseScopedIdentifier() {
+    const first = this.parseIdentifier();
+    if (this.text.startsWith("::", this.pos)) {
+      this.pos += 2;
+      const second = this.parseIdentifier();
+      return `${first}::${second}`;
+    }
+    return first;
   }
   parsePipelineStep() {
     const result = this.tryParse(() => this.parseResultStep());
