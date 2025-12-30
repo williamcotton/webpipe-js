@@ -285,6 +285,7 @@ interface Condition {
     jqExpr?: string;
     comparison: string;
     value: string;
+    valueFormat?: 'quoted' | 'backtick' | 'bare';
     isCallAssertion?: boolean;
     callTarget?: string;
     selector?: string;

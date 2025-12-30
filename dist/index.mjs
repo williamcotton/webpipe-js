@@ -744,20 +744,20 @@ var Parser = class {
     this.expect("|>");
     this.skipInlineSpaces();
     this.expect("dispatch");
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const branches = [];
     while (true) {
       const branch = this.tryParse(() => this.parseDispatchBranch());
       if (!branch) break;
       branches.push(branch);
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
     }
     const defaultBranch = this.tryParse(() => {
       this.expect("default:");
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
       return this.parseIfPipeline("end");
     });
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     this.tryParse(() => {
       this.expect("end");
       return true;
@@ -766,14 +766,14 @@ var Parser = class {
     return { kind: "Dispatch", branches, default: defaultBranch || void 0, start, end };
   }
   parseDispatchBranch() {
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const start = this.pos;
     this.expect("case");
     this.skipInlineSpaces();
     const condition = this.parseTagExpr();
     this.skipInlineSpaces();
     this.expect(":");
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const pipeline = this.parseIfPipeline("case", "default:", "end");
     const end = this.pos;
     return { condition, pipeline, start, end };
@@ -1131,8 +1131,8 @@ var Parser = class {
       }
       this.skipInlineSpaces();
       const value2 = (() => {
-        const v1 = this.tryParse(() => this.parseBacktickString());
-        if (v1 !== null) return v1;
+        const v12 = this.tryParse(() => this.parseBacktickString());
+        if (v12 !== null) return v12;
         const v2 = this.tryParse(() => this.parseQuotedString());
         if (v2 !== null) return v2;
         return this.consumeWhile((c) => c !== "\n");
@@ -1180,8 +1180,8 @@ var Parser = class {
         comparison2 = this.consumeWhile((c) => c !== " " && c !== "\n");
         this.skipInlineSpaces();
         value2 = (() => {
-          const v1 = this.tryParse(() => this.parseBacktickString());
-          if (v1 !== null) return v1;
+          const v12 = this.tryParse(() => this.parseBacktickString());
+          if (v12 !== null) return v12;
           const v2 = this.tryParse(() => this.parseQuotedString());
           if (v2 !== null) return v2;
           return this.consumeWhile((c) => c !== "\n");
@@ -1209,8 +1209,8 @@ var Parser = class {
         comparison2 = this.consumeWhile((c) => c !== " " && c !== "\n");
         this.skipInlineSpaces();
         value2 = (() => {
-          const v1 = this.tryParse(() => this.parseBacktickString());
-          if (v1 !== null) return v1;
+          const v12 = this.tryParse(() => this.parseBacktickString());
+          if (v12 !== null) return v12;
           const v2 = this.tryParse(() => this.parseQuotedString());
           if (v2 !== null) return v2;
           return this.consumeWhile((c) => c !== "\n");
@@ -1248,15 +1248,24 @@ var Parser = class {
     this.skipInlineSpaces();
     const comparison = this.consumeWhile((c) => c !== " " && c !== "\n");
     this.skipInlineSpaces();
-    const value = (() => {
-      const v1 = this.tryParse(() => this.parseBacktickString());
-      if (v1 !== null) return v1;
+    let value;
+    let valueFormat;
+    const v1 = this.tryParse(() => this.parseBacktickString());
+    if (v1 !== null) {
+      value = v1;
+      valueFormat = "backtick";
+    } else {
       const v2 = this.tryParse(() => this.parseQuotedString());
-      if (v2 !== null) return v2;
-      return this.consumeWhile((c) => c !== "\n");
-    })();
+      if (v2 !== null) {
+        value = v2;
+        valueFormat = "quoted";
+      } else {
+        value = this.consumeWhile((c) => c !== "\n");
+        valueFormat = "bare";
+      }
+    }
     const end = this.pos;
-    return { conditionType: ct, field, headerName: headerName ?? void 0, jqExpr: jqExpr ?? void 0, comparison, value, start, end };
+    return { conditionType: ct, field, headerName: headerName ?? void 0, jqExpr: jqExpr ?? void 0, comparison, value, valueFormat, start, end };
   }
   parseMockHead(prefixWord) {
     const start = this.pos;
@@ -1704,6 +1713,13 @@ function printMock(mock, indent = "  ") {
 function printCondition(condition, indent = "    ") {
   const condType = condition.conditionType.toLowerCase();
   const formatConditionValue = (val) => {
+    if (condition.valueFormat) {
+      if (condition.valueFormat === "quoted") return `"${val}"`;
+      if (condition.valueFormat === "backtick") return `\`${val}\``;
+      const isBareTemplate2 = /^\{\{[^}]+\}\}$/.test(val);
+      if (isBareTemplate2) return val;
+      return val;
+    }
     if (val.startsWith("`") || val.startsWith('"')) return val;
     const isBareTemplate = /^\{\{[^}]+\}\}$/.test(val);
     if (isBareTemplate) return val;
@@ -2029,16 +2045,10 @@ function formatPipelineStep(step, indent = "  ", isLastStep = false) {
   } else if (step.kind === "Dispatch") {
     const lines = [`${indent}|> dispatch`];
     step.branches.forEach((branch) => {
-      if (branch.pipeline.steps.length === 1) {
-        const inlineStep = formatPipelineStep(branch.pipeline.steps[0], indent + "    ");
-        const stepContent = inlineStep.substring((indent + "    ").length);
-        lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:   ${stepContent}`);
-      } else {
-        lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
-        branch.pipeline.steps.forEach((branchStep) => {
-          lines.push(formatPipelineStep(branchStep, indent + "    "));
-        });
-      }
+      lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
+      branch.pipeline.steps.forEach((branchStep) => {
+        lines.push(formatPipelineStep(branchStep, indent + "    "));
+      });
     });
     if (step.default) {
       lines.push(`${indent}  default:`);

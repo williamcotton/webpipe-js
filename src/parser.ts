@@ -228,6 +228,7 @@ export interface Condition {
   jqExpr?: string;
   comparison: string;
   value: string;
+  valueFormat?: 'quoted' | 'backtick' | 'bare';
   isCallAssertion?: boolean;
   callTarget?: string;
   selector?: string;
@@ -1181,7 +1182,7 @@ class Parser {
     this.expect('|>');
     this.skipInlineSpaces();
     this.expect('dispatch');
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
 
     // Parse case branches
     const branches: DispatchBranch[] = [];
@@ -1189,17 +1190,17 @@ class Parser {
       const branch = this.tryParse(() => this.parseDispatchBranch());
       if (!branch) break;
       branches.push(branch);
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
     }
 
     // Parse optional default branch
     const defaultBranch = this.tryParse(() => {
       this.expect('default:');
-      this.skipSpaces();
+      this.skipWhitespaceOnly();
       return this.parseIfPipeline('end');
     });
 
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
 
     // Check for optional 'end' keyword
     this.tryParse(() => {
@@ -1212,14 +1213,14 @@ class Parser {
   }
 
   private parseDispatchBranch(): DispatchBranch {
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     const start = this.pos;
     this.expect('case');
     this.skipInlineSpaces();
     const condition = this.parseTagExpr();
     this.skipInlineSpaces();
     this.expect(':');
-    this.skipSpaces();
+    this.skipWhitespaceOnly();
     // Parse pipeline (stops when it sees 'case', 'default', 'end', or non-pipeline content)
     const pipeline = this.parseIfPipeline('case', 'default:', 'end');
     const end = this.pos;
@@ -1784,15 +1785,24 @@ class Parser {
     this.skipInlineSpaces();
     const comparison = this.consumeWhile((c) => c !== ' ' && c !== '\n');
     this.skipInlineSpaces();
-    const value = (() => {
-      const v1 = this.tryParse(() => this.parseBacktickString());
-      if (v1 !== null) return v1;
+    let value: string;
+    let valueFormat: 'quoted' | 'backtick' | 'bare';
+    const v1 = this.tryParse(() => this.parseBacktickString());
+    if (v1 !== null) {
+      value = v1;
+      valueFormat = 'backtick';
+    } else {
       const v2 = this.tryParse(() => this.parseQuotedString());
-      if (v2 !== null) return v2;
-      return this.consumeWhile((c) => c !== '\n');
-    })();
+      if (v2 !== null) {
+        value = v2;
+        valueFormat = 'quoted';
+      } else {
+        value = this.consumeWhile((c) => c !== '\n');
+        valueFormat = 'bare';
+      }
+    }
     const end = this.pos;
-    return { conditionType: ct, field, headerName: headerName ?? undefined, jqExpr: jqExpr ?? undefined, comparison, value, start, end };
+    return { conditionType: ct, field, headerName: headerName ?? undefined, jqExpr: jqExpr ?? undefined, comparison, value, valueFormat, start, end };
   }
 
   private parseMockHead(prefixWord: 'with' | 'and'): Mock {
@@ -2367,8 +2377,20 @@ export function printMock(mock: Mock, indent: string = '  '): string {
 export function printCondition(condition: Condition, indent: string = '    '): string {
   const condType = condition.conditionType.toLowerCase();
 
-  // Smart value formatter that handles template variables properly
+  // Smart value formatter that uses stored format when available
   const formatConditionValue = (val: string): string => {
+    // If we have the original format stored, use it
+    if (condition.valueFormat) {
+      if (condition.valueFormat === 'quoted') return `"${val}"`;
+      if (condition.valueFormat === 'backtick') return `\`${val}\``;
+      // For 'bare' format, we still need to check if it's a template variable
+      const isBareTemplate = /^\{\{[^}]+\}\}$/.test(val);
+      if (isBareTemplate) return val;
+      // Otherwise it was originally bare (like a number or boolean)
+      return val;
+    }
+
+    // Fallback logic for older parsed data without valueFormat
     // If already quoted, keep it
     if (val.startsWith('`') || val.startsWith('"')) return val;
 
@@ -2807,18 +2829,10 @@ export function formatPipelineStep(step: PipelineStep, indent: string = '  ', is
     const lines: string[] = [`${indent}|> dispatch`];
     // Format case branches
     step.branches.forEach(branch => {
-      if (branch.pipeline.steps.length === 1) {
-        // Format single-step branches inline (match Rust behavior)
-        const inlineStep = formatPipelineStep(branch.pipeline.steps[0], indent + '    ');
-        const stepContent = inlineStep.substring((indent + '    ').length);
-        lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:   ${stepContent}`);
-      } else {
-        // Multi-step branches on separate lines
-        lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
-        branch.pipeline.steps.forEach(branchStep => {
-          lines.push(formatPipelineStep(branchStep, indent + '    '));
-        });
-      }
+      lines.push(`${indent}  case ${formatTagExpr(branch.condition)}:`);
+      branch.pipeline.steps.forEach(branchStep => {
+        lines.push(formatPipelineStep(branchStep, indent + '    '));
+      });
     });
     // Format default branch if present
     if (step.default) {
