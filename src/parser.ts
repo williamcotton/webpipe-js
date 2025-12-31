@@ -1859,15 +1859,31 @@ class Parser {
     this.skipInlineSpaces();
 
     const targetStart = this.pos;
-    // Support "query <name>" or "mutation <name>" or single identifier
+    // Support "query <name>" or "mutation <name>" or middleware[.scopedName]
     let target: string;
     if (this.text.startsWith('query ', this.pos) || this.text.startsWith('mutation ', this.pos)) {
       const type = this.consumeWhile((c) => c !== ' ');
       this.skipInlineSpaces();
-      const name = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+      const name = this.parseScopedIdentifier();
       target = `${type}.${name}`;
+    } else if (this.text.startsWith('pipeline ', this.pos)) {
+      // Support "pipeline <name>"
+      this.pos += 9; // length of "pipeline "
+      const name = this.parseScopedIdentifier();
+      target = `pipeline.${name}`;
     } else {
-      target = this.consumeWhile((c) => c !== ' ' && c !== '\n');
+      // Parse middleware type
+      const middlewareType = this.parseIdentifier();
+
+      // Check for dot separator (middleware.variableName)
+      if (this.cur() === '.') {
+        this.pos++; // consume '.'
+        const varName = this.parseScopedIdentifier();
+        target = `${middlewareType}.${varName}`;
+      } else {
+        // Just middleware type (no variable name)
+        target = middlewareType;
+      }
     }
 
     this.skipInlineSpaces();

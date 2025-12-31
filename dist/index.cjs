@@ -1366,10 +1366,21 @@ var Parser = class {
     if (this.text.startsWith("query ", this.pos) || this.text.startsWith("mutation ", this.pos)) {
       const type = this.consumeWhile((c) => c !== " ");
       this.skipInlineSpaces();
-      const name = this.consumeWhile((c) => c !== " " && c !== "\n");
+      const name = this.parseScopedIdentifier();
       target = `${type}.${name}`;
+    } else if (this.text.startsWith("pipeline ", this.pos)) {
+      this.pos += 9;
+      const name = this.parseScopedIdentifier();
+      target = `pipeline.${name}`;
     } else {
-      target = this.consumeWhile((c) => c !== " " && c !== "\n");
+      const middlewareType = this.parseIdentifier();
+      if (this.cur() === ".") {
+        this.pos++;
+        const varName = this.parseScopedIdentifier();
+        target = `${middlewareType}.${varName}`;
+      } else {
+        target = middlewareType;
+      }
     }
     this.skipInlineSpaces();
     this.expect("returning");
