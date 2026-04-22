@@ -567,9 +567,11 @@ var Parser = class {
     this.skipInlineSpaces();
     let config = "";
     let configType = "quoted";
+    let hasConfig = false;
     let configStart = void 0;
     let configEnd = void 0;
     if (this.cur() === ":") {
+      hasConfig = true;
       this.pos++;
       this.skipInlineSpaces();
       configStart = this.pos;
@@ -582,7 +584,7 @@ var Parser = class {
     const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: "Regular", name, nameStart, nameEnd, args, config, configType, configStart, configEnd, condition, parsedJoinTargets, start, end };
+    return { kind: "Regular", name, nameStart, nameEnd, args, config, configType, hasConfig, configStart, configEnd, condition, parsedJoinTargets, start, end };
   }
   /**
    * Parse optional step condition (tag expression after the config)
@@ -2073,9 +2075,9 @@ function formatConfigValue(value) {
 function formatPipelineStep(step, indent = "  ", isLastStep = false) {
   if (step.kind === "Regular") {
     const argsPart = step.args.length > 0 ? `(${step.args.join(", ")})` : "";
-    const configPart = formatStepConfig(step.config, step.configType);
     const conditionPart = step.condition ? " " + formatTagExpr(step.condition) : "";
-    return `${indent}|> ${step.name}${argsPart}: ${configPart}${conditionPart}`;
+    const configPart = step.hasConfig ? `: ${formatStepConfig(step.config, step.configType)}` : "";
+    return `${indent}|> ${step.name}${argsPart}${configPart}${conditionPart}`;
   } else if (step.kind === "Result") {
     const lines = [`${indent}|> result`];
     step.branches.forEach((branch) => {

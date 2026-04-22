@@ -156,7 +156,7 @@ export type TagExpr =
   | { kind: 'Or'; left: TagExpr; right: TagExpr };
 
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; nameStart: number; nameEnd: number; args: string[]; config: string; configType: ConfigType; configStart?: number; configEnd?: number; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
+  | { kind: 'Regular'; name: string; nameStart: number; nameEnd: number; args: string[]; config: string; configType: ConfigType; hasConfig: boolean; configStart?: number; configEnd?: number; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
   | { kind: 'Result'; branches: ResultBranch[]; start: number; end: number }
   | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline; start: number; end: number }
   | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline; start: number; end: number }
@@ -885,11 +885,13 @@ class Parser {
 
     let config = '';
     let configType: ConfigType = 'quoted'; // Default config type for empty/missing config
+    let hasConfig = false;
     let configStart: number | undefined = undefined;
     let configEnd: number | undefined = undefined;
 
     // Check for optional config starting with ':'
     if (this.cur() === ':') {
+      hasConfig = true;
       this.pos++; // consume ':'
       this.skipInlineSpaces();
       configStart = this.pos; // Capture position before parsing config
@@ -907,7 +909,7 @@ class Parser {
 
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: 'Regular', name, nameStart, nameEnd, args, config, configType, configStart, configEnd, condition, parsedJoinTargets, start, end };
+    return { kind: 'Regular', name, nameStart, nameEnd, args, config, configType, hasConfig, configStart, configEnd, condition, parsedJoinTargets, start, end };
   }
 
   /**
@@ -2808,9 +2810,11 @@ export function formatConfigValue(value: ConfigValue): string {
 export function formatPipelineStep(step: PipelineStep, indent: string = '  ', isLastStep: boolean = false): string {
   if (step.kind === 'Regular') {
     const argsPart = step.args.length > 0 ? `(${step.args.join(', ')})` : '';
-    const configPart = formatStepConfig(step.config, step.configType);
     const conditionPart = step.condition ? ' ' + formatTagExpr(step.condition) : '';
-    return `${indent}|> ${step.name}${argsPart}: ${configPart}${conditionPart}`;
+    const configPart = step.hasConfig
+      ? `: ${formatStepConfig(step.config, step.configType)}`
+      : '';
+    return `${indent}|> ${step.name}${argsPart}${configPart}${conditionPart}`;
   } else if (step.kind === 'Result') {
     const lines: string[] = [`${indent}|> result`];
     step.branches.forEach(branch => {

@@ -268,6 +268,32 @@ describe('parseProgram - tags support', () => {
     });
   });
 
+  it('preserves configless regular steps and explicit empty configs', () => {
+    const src = `pipeline test =
+  |> withAuth
+  |> handlebars: \`\``;
+    const program = parseProgram(src);
+    const steps = program.pipelines[0].pipeline.steps;
+
+    expect(steps[0].kind).toBe('Regular');
+    expect(steps[1].kind).toBe('Regular');
+
+    if (steps[0].kind === 'Regular' && steps[1].kind === 'Regular') {
+      expect(steps[0].name).toBe('withAuth');
+      expect(steps[0].config).toBe('');
+      expect(steps[0].hasConfig).toBe(false);
+
+      expect(steps[1].name).toBe('handlebars');
+      expect(steps[1].config).toBe('');
+      expect(steps[1].hasConfig).toBe(true);
+    }
+
+    const formatted = prettyPrint(program);
+    expect(formatted).toContain('|> withAuth');
+    expect(formatted).not.toContain('|> withAuth:');
+    expect(formatted).toContain('|> handlebars: ``');
+  });
+
   it('roundtrip: parse -> format -> parse preserves tags', () => {
     const src = `pipeline test =
   |> jq: \`{ hello: "world" }\` @prod
@@ -967,4 +993,3 @@ describe('parseProgram - inline arguments', () => {
     }
   });
 });
-

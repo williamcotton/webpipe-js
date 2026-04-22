@@ -168,6 +168,7 @@ type PipelineStep = {
     args: string[];
     config: string;
     configType: ConfigType;
+    hasConfig: boolean;
     configStart?: number;
     configEnd?: number;
     condition?: TagExpr;
