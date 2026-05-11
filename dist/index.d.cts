@@ -129,6 +129,10 @@ interface Pipeline {
     end: number;
 }
 type ConfigType = 'backtick' | 'quoted' | 'identifier';
+interface SourceSpan {
+    start: number;
+    end: number;
+}
 type LetValueFormat = 'quoted' | 'backtick' | 'bare';
 interface LetVariable {
     name: string;
@@ -166,6 +170,7 @@ type PipelineStep = {
     nameStart: number;
     nameEnd: number;
     args: string[];
+    argSpans: SourceSpan[];
     config: string;
     configType: ConfigType;
     hasConfig: boolean;
@@ -357,4 +362,4 @@ declare function formatTagExpr(expr: TagExpr): string;
 declare function formatPipelineRef(ref: PipelineRef): string[];
 declare function formatWhen(when: When): string;
 
-export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type DispatchBranch, type DomAssertType, type GraphQLSchema, type Import, type It, type LetValueFormat, type LetVariable, type Mock, type MutationResolver, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type QueryResolver, type ResultBranch, type ResultBranchType, type Route, type Tag, type TagExpr, type TestLetVariable, type TypeResolver, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatTag, formatTagExpr, formatTags, formatWhen, getPipelineRanges, getTestLetVariableRanges, getTestLetVariables, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printFeatureFlags, printGraphQLSchema, printMock, printMutationResolver, printPipeline, printQueryResolver, printRoute, printTest, printTypeResolver, printVariable };
+export { type Comment, type Condition, type Config, type ConfigProperty, type ConfigType, type ConfigValue, type Describe, type DiagnosticSeverity, type DispatchBranch, type DomAssertType, type GraphQLSchema, type Import, type It, type LetValueFormat, type LetVariable, type Mock, type MutationResolver, type NamedPipeline, type ParseDiagnostic, type Pipeline, type PipelineRef, type PipelineStep, type Program, type QueryResolver, type ResultBranch, type ResultBranchType, type Route, type SourceSpan, type Tag, type TagExpr, type TestLetVariable, type TypeResolver, type Variable, type When, formatConfigValue, formatPipelineRef, formatPipelineStep, formatStepConfig, formatTag, formatTagExpr, formatTags, formatWhen, getPipelineRanges, getTestLetVariableRanges, getTestLetVariables, getVariableRanges, parseProgram, parseProgramWithDiagnostics, prettyPrint, printComment, printCondition, printConfig, printDescribe, printFeatureFlags, printGraphQLSchema, printMock, printMutationResolver, printPipeline, printQueryResolver, printRoute, printTest, printTypeResolver, printVariable };

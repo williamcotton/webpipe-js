@@ -245,6 +245,32 @@ var Parser = class {
   skipWhitespaceOnly() {
     this.consumeWhile((ch) => ch === " " || ch === "	" || ch === "\r" || ch === "\n");
   }
+  skipStandaloneCommentsBeforeKeywords(keywords) {
+    while (true) {
+      this.skipWhitespaceOnly();
+      const commentStart = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (!comment) {
+        this.pos = commentStart;
+        return;
+      }
+      const afterComment = this.pos;
+      if (this.cur() === "\n") this.pos++;
+      while (true) {
+        this.skipWhitespaceOnly();
+        const nestedComment = this.tryParse(() => this.parseStandaloneComment());
+        if (!nestedComment) break;
+        if (this.cur() === "\n") this.pos++;
+      }
+      const followedByKeyword = keywords.some((keyword) => this.text.startsWith(keyword, this.pos));
+      this.pos = afterComment;
+      if (!followedByKeyword) {
+        this.pos = commentStart;
+        return;
+      }
+      if (this.cur() === "\n") this.pos++;
+    }
+  }
   skipInlineSpaces() {
     this.consumeWhile((ch) => ch === " " || ch === "	" || ch === "\r");
   }
@@ -509,7 +535,9 @@ var Parser = class {
     const nameStart = this.pos;
     const name = this.parseIdentifier();
     const nameEnd = this.pos;
-    const args = this.parseInlineArgs();
+    const inlineArgs = this.parseInlineArgs();
+    const args = inlineArgs.args;
+    const argSpans = inlineArgs.argSpans;
     this.skipInlineSpaces();
     let config = "";
     let configType = "quoted";
@@ -530,7 +558,7 @@ var Parser = class {
     const parsedJoinTargets = name === "join" ? this.parseJoinTaskNames(config) : void 0;
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: "Regular", name, nameStart, nameEnd, args, config, configType, hasConfig, configStart, configEnd, condition, parsedJoinTargets, start, end };
+    return { kind: "Regular", name, nameStart, nameEnd, args, argSpans, config, configType, hasConfig, configStart, configEnd, condition, parsedJoinTargets, start, end };
   }
   /**
    * Parse optional step condition (tag expression after the config)
@@ -588,58 +616,58 @@ var Parser = class {
    * Split argument content by commas while respecting nesting depth and strings
    * Example: `"url", {a:1, b:2}` -> [`"url"`, `{a:1, b:2}`]
    */
-  splitBalancedArgs(content) {
+  splitBalancedArgs(content, baseOffset) {
     const args = [];
-    let current = "";
+    const argSpans = [];
+    let segmentStart = 0;
     let depth = 0;
     let inString = false;
     let stringChar = "";
     let escapeNext = false;
+    const pushArg = (segmentEnd) => {
+      let start = segmentStart;
+      let end = segmentEnd;
+      while (start < end && /\s/.test(content[start])) start++;
+      while (end > start && /\s/.test(content[end - 1])) end--;
+      if (start < end) {
+        args.push(content.slice(start, end));
+        argSpans.push({ start: baseOffset + start, end: baseOffset + end });
+      }
+    };
     for (let i = 0; i < content.length; i++) {
       const ch = content[i];
       if (escapeNext) {
-        current += ch;
         escapeNext = false;
         continue;
       }
       if (ch === "\\" && inString) {
-        current += ch;
         escapeNext = true;
         continue;
       }
-      if ((ch === '"' || ch === "`") && !inString) {
+      if ((ch === '"' || ch === "'" || ch === "`") && !inString) {
         inString = true;
         stringChar = ch;
-        current += ch;
         continue;
       }
       if (ch === stringChar && inString) {
         inString = false;
         stringChar = "";
-        current += ch;
         continue;
       }
       if (inString) {
-        current += ch;
         continue;
       }
       if (ch === "(" || ch === "[" || ch === "{") {
         depth++;
-        current += ch;
       } else if (ch === ")" || ch === "]" || ch === "}") {
         depth--;
-        current += ch;
       } else if (ch === "," && depth === 0) {
-        args.push(current.trim());
-        current = "";
-      } else {
-        current += ch;
+        pushArg(i);
+        segmentStart = i + 1;
       }
     }
-    if (current.trim().length > 0) {
-      args.push(current.trim());
-    }
-    return args;
+    pushArg(content.length);
+    return { args, argSpans };
   }
   /**
    * Parse inline arguments: middleware(arg1, arg2) or middleware[arg1, arg2]
@@ -651,7 +679,7 @@ var Parser = class {
     const ch = this.cur();
     if (ch !== "(" && ch !== "[") {
       this.pos = trimmedStart;
-      return [];
+      return { args: [], argSpans: [] };
     }
     const openChar = ch;
     const closeChar = openChar === "(" ? ")" : "]";
@@ -703,9 +731,9 @@ var Parser = class {
     const argsContent = this.text.slice(contentStart, this.pos);
     this.pos++;
     if (argsContent.trim().length === 0) {
-      return [];
+      return { args: [], argSpans: [] };
     }
-    return this.splitBalancedArgs(argsContent);
+    return this.splitBalancedArgs(argsContent, contentStart);
   }
   parseResultStep() {
     this.skipWhitespaceOnly();
@@ -783,11 +811,13 @@ var Parser = class {
     this.skipWhitespaceOnly();
     const branches = [];
     while (true) {
+      this.skipStandaloneCommentsBeforeKeywords(["case", "default:", "end"]);
       const branch = this.tryParse(() => this.parseDispatchBranch());
       if (!branch) break;
       branches.push(branch);
       this.skipWhitespaceOnly();
     }
+    this.skipStandaloneCommentsBeforeKeywords(["default:", "end"]);
     const defaultBranch = this.tryParse(() => {
       this.expect("default:");
       this.skipWhitespaceOnly();

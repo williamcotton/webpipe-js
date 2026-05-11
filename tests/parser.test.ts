@@ -840,6 +840,7 @@ describe('parseProgram - inline arguments', () => {
       if (step.kind === 'Regular') {
         expect(step.name).toBe('fetch');
         expect(step.args).toEqual(['"https://api.example.com/users"']);
+        expect(step.argSpans.map(span => src.slice(span.start, span.end))).toEqual(step.args);
         expect(step.config).toBe('_');
       }
     }
@@ -859,6 +860,7 @@ describe('parseProgram - inline arguments', () => {
         expect(step.args.length).toBe(2);
         expect(step.args[0]).toBe('"url"');
         expect(step.args[1]).toBe('{method: "POST", body: {id: 123}}');
+        expect(step.argSpans.map(span => src.slice(span.start, span.end))).toEqual(step.args);
       }
     }
   });
@@ -877,6 +879,7 @@ describe('parseProgram - inline arguments', () => {
         expect(step.args.length).toBe(2);
         expect(step.args[0]).toBe('.userId');
         expect(step.args[1]).toBe('"active"');
+        expect(step.argSpans.map(span => src.slice(span.start, span.end))).toEqual(step.args);
       }
     }
   });
@@ -948,6 +951,26 @@ describe('parseProgram - inline arguments', () => {
         expect(step.name).toBe('graphql');
         expect(step.args.length).toBe(1);
         expect(step.args[0]).toBe('{userId: .id}');
+        expect(step.argSpans.map(span => src.slice(span.start, span.end))).toEqual(step.args);
+      }
+    }
+  });
+
+  it('captures trimmed inline argument spans for precise diagnostics', () => {
+    const src = `GET /test
+  |> graphql({ userId: .targetId }, "other"): \`query { user { name } }\``;
+    const program = parseProgram(src);
+
+    const route = program.routes[0];
+    if (route.pipeline.kind === 'Inline') {
+      const step = route.pipeline.pipeline.steps[0];
+      expect(step.kind).toBe('Regular');
+      if (step.kind === 'Regular') {
+        expect(step.args).toEqual(['{ userId: .targetId }', '"other"']);
+        expect(step.argSpans).toHaveLength(2);
+        expect(src.slice(step.argSpans[0].start, step.argSpans[0].end)).toBe('{ userId: .targetId }');
+        expect(src.slice(step.argSpans[1].start, step.argSpans[1].end)).toBe('"other"');
+        expect(src.indexOf('.targetId')).toBe(step.argSpans[0].start + step.args[0].indexOf('.targetId'));
       }
     }
   });

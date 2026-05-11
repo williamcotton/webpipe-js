@@ -128,6 +128,11 @@ export interface Pipeline {
 
 export type ConfigType = 'backtick' | 'quoted' | 'identifier';
 
+export interface SourceSpan {
+  start: number;
+  end: number;
+}
+
 export type LetValueFormat = 'quoted' | 'backtick' | 'bare';
 
 export interface LetVariable {
@@ -156,7 +161,7 @@ export type TagExpr =
   | { kind: 'Or'; left: TagExpr; right: TagExpr };
 
 export type PipelineStep =
-  | { kind: 'Regular'; name: string; nameStart: number; nameEnd: number; args: string[]; config: string; configType: ConfigType; hasConfig: boolean; configStart?: number; configEnd?: number; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
+  | { kind: 'Regular'; name: string; nameStart: number; nameEnd: number; args: string[]; argSpans: SourceSpan[]; config: string; configType: ConfigType; hasConfig: boolean; configStart?: number; configEnd?: number; condition?: TagExpr; parsedJoinTargets?: string[]; start: number; end: number }
   | { kind: 'Result'; branches: ResultBranch[]; start: number; end: number }
   | { kind: 'If'; condition: Pipeline; thenBranch: Pipeline; elseBranch?: Pipeline; start: number; end: number }
   | { kind: 'Dispatch'; branches: DispatchBranch[]; default?: Pipeline; start: number; end: number }
@@ -546,6 +551,37 @@ class Parser {
     this.consumeWhile((ch) => ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n');
   }
 
+  private skipStandaloneCommentsBeforeKeywords(keywords: string[]): void {
+    while (true) {
+      this.skipWhitespaceOnly();
+      const commentStart = this.pos;
+      const comment = this.tryParse(() => this.parseStandaloneComment());
+      if (!comment) {
+        this.pos = commentStart;
+        return;
+      }
+
+      const afterComment = this.pos;
+      if (this.cur() === '\n') this.pos++;
+
+      while (true) {
+        this.skipWhitespaceOnly();
+        const nestedComment = this.tryParse(() => this.parseStandaloneComment());
+        if (!nestedComment) break;
+        if (this.cur() === '\n') this.pos++;
+      }
+
+      const followedByKeyword = keywords.some(keyword => this.text.startsWith(keyword, this.pos));
+      this.pos = afterComment;
+      if (!followedByKeyword) {
+        this.pos = commentStart;
+        return;
+      }
+
+      if (this.cur() === '\n') this.pos++;
+    }
+  }
+
   private skipInlineSpaces(): void {
     this.consumeWhile((ch) => ch === ' ' || ch === '\t' || ch === '\r');
   }
@@ -879,7 +915,9 @@ class Parser {
     const nameEnd = this.pos; // Capture position after parsing name
 
     // Parse optional inline arguments: middleware(arg1, arg2) or middleware[arg1, arg2]
-    const args = this.parseInlineArgs();
+    const inlineArgs = this.parseInlineArgs();
+    const args = inlineArgs.args;
+    const argSpans = inlineArgs.argSpans;
 
     this.skipInlineSpaces();
 
@@ -909,7 +947,7 @@ class Parser {
 
     this.skipWhitespaceOnly();
     const end = this.pos;
-    return { kind: 'Regular', name, nameStart, nameEnd, args, config, configType, hasConfig, configStart, configEnd, condition, parsedJoinTargets, start, end };
+    return { kind: 'Regular', name, nameStart, nameEnd, args, argSpans, config, configType, hasConfig, configStart, configEnd, condition, parsedJoinTargets, start, end };
   }
 
   /**
@@ -993,77 +1031,78 @@ class Parser {
    * Split argument content by commas while respecting nesting depth and strings
    * Example: `"url", {a:1, b:2}` -> [`"url"`, `{a:1, b:2}`]
    */
-  private splitBalancedArgs(content: string): string[] {
+  private splitBalancedArgs(content: string, baseOffset: number): { args: string[]; argSpans: SourceSpan[] } {
     const args: string[] = [];
-    let current = '';
+    const argSpans: SourceSpan[] = [];
+    let segmentStart = 0;
     let depth = 0;
     let inString = false;
     let stringChar = '';
     let escapeNext = false;
 
+    const pushArg = (segmentEnd: number) => {
+      let start = segmentStart;
+      let end = segmentEnd;
+      while (start < end && /\s/.test(content[start])) start++;
+      while (end > start && /\s/.test(content[end - 1])) end--;
+      if (start < end) {
+        args.push(content.slice(start, end));
+        argSpans.push({ start: baseOffset + start, end: baseOffset + end });
+      }
+    };
+
     for (let i = 0; i < content.length; i++) {
       const ch = content[i];
 
       if (escapeNext) {
-        current += ch;
         escapeNext = false;
         continue;
       }
 
       if (ch === '\\' && inString) {
-        current += ch;
         escapeNext = true;
         continue;
       }
 
-      if ((ch === '"' || ch === '`') && !inString) {
+      if ((ch === '"' || ch === "'" || ch === '`') && !inString) {
         inString = true;
         stringChar = ch;
-        current += ch;
         continue;
       }
 
       if (ch === stringChar && inString) {
         inString = false;
         stringChar = '';
-        current += ch;
         continue;
       }
 
       if (inString) {
-        current += ch;
         continue;
       }
 
       // Track nesting depth for brackets, braces, parentheses
       if (ch === '(' || ch === '[' || ch === '{') {
         depth++;
-        current += ch;
       } else if (ch === ')' || ch === ']' || ch === '}') {
         depth--;
-        current += ch;
       } else if (ch === ',' && depth === 0) {
         // Split on comma at depth 0
-        args.push(current.trim());
-        current = '';
-      } else {
-        current += ch;
+        pushArg(i);
+        segmentStart = i + 1;
       }
     }
 
     // Add the last argument
-    if (current.trim().length > 0) {
-      args.push(current.trim());
-    }
+    pushArg(content.length);
 
-    return args;
+    return { args, argSpans };
   }
 
   /**
    * Parse inline arguments: middleware(arg1, arg2) or middleware[arg1, arg2]
    * Returns the array of argument strings and advances position past the closing bracket
    */
-  private parseInlineArgs(): string[] {
+  private parseInlineArgs(): { args: string[]; argSpans: SourceSpan[] } {
     const trimmedStart = this.pos;
     this.skipInlineSpaces();
 
@@ -1071,7 +1110,7 @@ class Parser {
     const ch = this.cur();
     if (ch !== '(' && ch !== '[') {
       this.pos = trimmedStart;
-      return [];
+      return { args: [], argSpans: [] };
     }
 
     const openChar = ch;
@@ -1138,10 +1177,10 @@ class Parser {
 
     // Split by commas while respecting nesting
     if (argsContent.trim().length === 0) {
-      return [];
+      return { args: [], argSpans: [] };
     }
 
-    return this.splitBalancedArgs(argsContent);
+    return this.splitBalancedArgs(argsContent, contentStart);
   }
 
   private parseResultStep(): PipelineStep {
@@ -1235,6 +1274,7 @@ class Parser {
     // Parse case branches
     const branches: DispatchBranch[] = [];
     while (true) {
+      this.skipStandaloneCommentsBeforeKeywords(['case', 'default:', 'end']);
       const branch = this.tryParse(() => this.parseDispatchBranch());
       if (!branch) break;
       branches.push(branch);
@@ -1242,6 +1282,7 @@ class Parser {
     }
 
     // Parse optional default branch
+    this.skipStandaloneCommentsBeforeKeywords(['default:', 'end']);
     const defaultBranch = this.tryParse(() => {
       this.expect('default:');
       this.skipWhitespaceOnly();
