@@ -498,34 +498,9 @@ var Parser = class {
   parsePipelineStep() {
     const result = this.tryParse(() => this.parseResultStep());
     if (result) return result;
-    const ifStep = this.tryParse(() => this.parseIfStep());
-    if (ifStep) return ifStep;
     const dispatchStep = this.tryParse(() => this.parseDispatchStep());
     if (dispatchStep) return dispatchStep;
-    const foreachStep = this.tryParse(() => this.parseForeachStep());
-    if (foreachStep) return foreachStep;
     return this.parseRegularStep();
-  }
-  parseForeachStep() {
-    this.skipWhitespaceOnly();
-    const start = this.pos;
-    this.expect("|>");
-    this.skipInlineSpaces();
-    this.expect("foreach");
-    if (this.cur() !== " " && this.cur() !== "	") {
-      throw new ParseFailure("space after foreach", this.pos);
-    }
-    this.skipInlineSpaces();
-    const selector = this.consumeWhile((c) => c !== "\n" && c !== "#").trim();
-    if (selector.length === 0) {
-      throw new ParseFailure("foreach selector", this.pos);
-    }
-    this.skipSpaces();
-    const pipeline = this.parseIfPipeline("end");
-    this.skipSpaces();
-    this.expect("end");
-    const end = this.pos;
-    return { kind: "Foreach", selector, pipeline, start, end };
   }
   parseRegularStep() {
     this.skipWhitespaceOnly();
@@ -776,32 +751,6 @@ var Parser = class {
     const end = this.pos;
     return { branchType, statusCode, pipeline, start, end };
   }
-  parseIfStep() {
-    this.skipWhitespaceOnly();
-    const start = this.pos;
-    this.expect("|>");
-    this.skipInlineSpaces();
-    this.expect("if");
-    this.skipSpaces();
-    const condition = this.parseIfPipeline("then:");
-    this.skipSpaces();
-    this.expect("then:");
-    this.skipWhitespaceOnly();
-    const thenBranch = this.parseIfPipeline("else:", "end");
-    this.skipWhitespaceOnly();
-    const elseBranch = this.tryParse(() => {
-      this.expect("else:");
-      this.skipWhitespaceOnly();
-      return this.parseIfPipeline("end");
-    });
-    this.skipWhitespaceOnly();
-    this.tryParse(() => {
-      this.expect("end");
-      return true;
-    });
-    const end = this.pos;
-    return { kind: "If", condition, thenBranch, elseBranch: elseBranch || void 0, start, end };
-  }
   parseDispatchStep() {
     this.skipWhitespaceOnly();
     const start = this.pos;
@@ -1017,18 +966,6 @@ var Parser = class {
     if (inline && inline.steps.length > 0) {
       return { kind: "Inline", pipeline: inline, start: inline.start, end: inline.end };
     }
-    const named = this.tryParse(() => {
-      this.skipWhitespaceOnly();
-      const start = this.pos;
-      this.expect("|>");
-      this.skipInlineSpaces();
-      this.expect("pipeline:");
-      this.skipInlineSpaces();
-      const name = this.parseIdentifier();
-      const end = this.pos;
-      return { kind: "Named", name, start, end };
-    });
-    if (named) return named;
     throw new Error("pipeline-ref");
   }
   parseVariable() {
@@ -2064,61 +2001,6 @@ function formatPipelineStep(step, indent = "  ", isLastStep = false) {
       });
     });
     return lines.join("\n");
-  } else if (step.kind === "If") {
-    const lines = [`${indent}|> if`];
-    const conditionItems = [];
-    step.condition.steps.forEach((s) => {
-      conditionItems.push({ type: "step", item: s, position: s.start });
-    });
-    step.condition.comments.forEach((c) => {
-      conditionItems.push({ type: "comment", item: c, position: c.start || 0 });
-    });
-    conditionItems.sort((a, b) => a.position - b.position);
-    conditionItems.forEach((entry) => {
-      if (entry.type === "step") {
-        lines.push(formatPipelineStep(entry.item, indent + "  "));
-      } else {
-        lines.push(`${indent}  ${printComment(entry.item)}`);
-      }
-    });
-    lines.push(`${indent}  then:`);
-    const thenItems = [];
-    step.thenBranch.steps.forEach((s) => {
-      thenItems.push({ type: "step", item: s, position: s.start });
-    });
-    step.thenBranch.comments.forEach((c) => {
-      thenItems.push({ type: "comment", item: c, position: c.start || 0 });
-    });
-    thenItems.sort((a, b) => a.position - b.position);
-    thenItems.forEach((entry) => {
-      if (entry.type === "step") {
-        lines.push(formatPipelineStep(entry.item, indent + "    "));
-      } else {
-        lines.push(`${indent}    ${printComment(entry.item)}`);
-      }
-    });
-    if (step.elseBranch) {
-      lines.push(`${indent}  else:`);
-      const elseItems = [];
-      step.elseBranch.steps.forEach((s) => {
-        elseItems.push({ type: "step", item: s, position: s.start });
-      });
-      step.elseBranch.comments.forEach((c) => {
-        elseItems.push({ type: "comment", item: c, position: c.start || 0 });
-      });
-      elseItems.sort((a, b) => a.position - b.position);
-      elseItems.forEach((entry) => {
-        if (entry.type === "step") {
-          lines.push(formatPipelineStep(entry.item, indent + "    "));
-        } else {
-          lines.push(`${indent}    ${printComment(entry.item)}`);
-        }
-      });
-    }
-    if (!isLastStep) {
-      lines.push(`${indent}end`);
-    }
-    return lines.join("\n");
   } else if (step.kind === "Dispatch") {
     const lines = [`${indent}|> dispatch`];
     step.branches.forEach((branch) => {
@@ -2134,14 +2016,8 @@ function formatPipelineStep(step, indent = "  ", isLastStep = false) {
       });
     }
     return lines.join("\n");
-  } else {
-    const lines = [`${indent}|> foreach ${step.selector}`];
-    step.pipeline.steps.forEach((innerStep) => {
-      lines.push(formatPipelineStep(innerStep, indent + "  "));
-    });
-    lines.push(`${indent}end`);
-    return lines.join("\n");
   }
+  throw new Error(`Unsupported pipeline step: ${step.kind}`);
 }
 function formatStepConfig(config, configType) {
   switch (configType) {
@@ -2181,35 +2057,31 @@ function formatTagExpr(expr) {
   }
 }
 function formatPipelineRef(ref) {
-  if (ref.kind === "Named") {
-    return [`  |> pipeline: ${ref.name}`];
-  } else {
-    const lines = [];
-    const items = [];
-    ref.pipeline.steps.forEach((step) => {
-      items.push({ type: "step", item: step, position: step.start });
-    });
-    ref.pipeline.comments.forEach((comment) => {
-      items.push({ type: "comment", item: comment, position: comment.start || 0 });
-    });
-    items.sort((a, b) => a.position - b.position);
-    let lastStepIndex = -1;
-    for (let i = items.length - 1; i >= 0; i--) {
-      if (items[i].type === "step") {
-        lastStepIndex = i;
-        break;
-      }
+  const lines = [];
+  const items = [];
+  ref.pipeline.steps.forEach((step) => {
+    items.push({ type: "step", item: step, position: step.start });
+  });
+  ref.pipeline.comments.forEach((comment) => {
+    items.push({ type: "comment", item: comment, position: comment.start || 0 });
+  });
+  items.sort((a, b) => a.position - b.position);
+  let lastStepIndex = -1;
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].type === "step") {
+      lastStepIndex = i;
+      break;
     }
-    items.forEach((entry, index) => {
-      if (entry.type === "step") {
-        const isLastStep = index === lastStepIndex;
-        lines.push(formatPipelineStep(entry.item, "  ", isLastStep));
-      } else {
-        lines.push(`  ${printComment(entry.item)}`);
-      }
-    });
-    return lines;
   }
+  items.forEach((entry, index) => {
+    if (entry.type === "step") {
+      const isLastStep = index === lastStepIndex;
+      lines.push(formatPipelineStep(entry.item, "  ", isLastStep));
+    } else {
+      lines.push(`  ${printComment(entry.item)}`);
+    }
+  });
+  return lines;
 }
 function formatWhen(when) {
   switch (when.kind) {

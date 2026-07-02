@@ -6,9 +6,11 @@ GET /hello/:world
 
 describe "hello, world"
   it "calls the route"
-    when calling GET /hello/world
+    let world = "world"
+
+    when calling GET /hello/{{world}}
     then status is 200
-    and output equals `<p>hello, world</p>`
+    and selector `p` text equals "hello, {{world}}"
 
 GET /lua/:id/example
   |> lua: `
@@ -51,6 +53,10 @@ config auth {
   cookiePath: "/"
 }
 
+config graphql {
+  endpoint: "/graphql"
+}
+
 ## Tests
 
 GET /test-lua-env
@@ -69,7 +75,7 @@ GET /hello
   |> jq: `{ hello: "world" }`
 
 GET /page/:id
-  |> pipeline: getTeams
+  |> getTeams
   |> jq: `{ team: .data.rows[0] }`
 
 pg teamsQuery = `SELECT * FROM teams`
@@ -191,6 +197,136 @@ GET /lua-cpu
     }
   `
 
+GET /lua-pipeline-benchmark
+  |> lua: `
+    -- Stage 1: Initialize with user data and array
+    return {
+      user = {
+        id = 12345,
+        name = "Test User",
+        email = "test@example.com",
+        roles = {"admin", "developer", "moderator"}
+      },
+      data = {},
+      items = {},
+      stage = 1,
+      timestamp = os.time()
+    }
+  `
+  |> lua: `
+    -- Stage 2: Generate array of 100 items with metadata
+    local items = {}
+    for i = 1, 100 do
+      items[i] = {
+        id = i,
+        value = i * 10,
+        squared = i * i,
+        label = "Item_" .. tostring(i)
+      }
+    end
+
+    return {
+      user = request.user,
+      data = request.data,
+      items = items,
+      itemCount = 100,
+      stage = 2,
+      timestamp = request.timestamp
+    }
+  `
+  |> lua: `
+    -- Stage 3: Process items and calculate statistics
+    local total = 0
+    local squared_total = 0
+    local processed = {}
+
+    for i, item in ipairs(request.items) do
+      total = total + item.value
+      squared_total = squared_total + item.squared
+      if item.value % 20 == 0 then
+        processed[#processed + 1] = {
+          id = item.id,
+          value = item.value,
+          category = "special"
+        }
+      end
+    end
+
+    return {
+      user = request.user,
+      items = request.items,
+      itemCount = request.itemCount,
+      data = {
+        sum = total,
+        squaredSum = squared_total,
+        average = total / request.itemCount,
+        specialItems = processed
+      },
+      stage = 3,
+      timestamp = request.timestamp
+    }
+  `
+  |> lua: `
+    -- Stage 4: Add computed fields and enrich user data
+    local userScore = 0
+    for i, role in ipairs(request.user.roles) do
+      userScore = userScore + string.len(role) * 10
+    end
+
+    local enrichedUser = {
+      id = request.user.id,
+      name = request.user.name,
+      email = request.user.email,
+      roles = request.user.roles,
+      roleCount = #request.user.roles,
+      computed = {
+        score = userScore,
+        level = math.floor(userScore / 50),
+        badge = userScore > 150 and "gold" or "silver"
+      }
+    }
+
+    return {
+      user = enrichedUser,
+      items = request.items,
+      itemCount = request.itemCount,
+      data = request.data,
+      stage = 4,
+      timestamp = request.timestamp
+    }
+  `
+  |> lua: `
+    -- Stage 5: Final aggregation and response formatting
+    local processingTime = os.time() - request.timestamp
+
+    return {
+      summary = {
+        user = request.user.name,
+        userId = request.user.id,
+        userLevel = request.user.computed.level,
+        userBadge = request.user.computed.badge,
+        totalItems = request.itemCount,
+        specialItemsFound = #request.data.specialItems,
+        dataProcessed = {
+          sum = request.data.sum,
+          average = request.data.average,
+          squaredSum = request.data.squaredSum
+        }
+      },
+      performance = {
+        stages = 5,
+        processingTimeSeconds = processingTime,
+        itemsProcessed = request.itemCount,
+        note = "5 Lua stages with data passing - tests zero-copy architecture"
+      },
+      benchmark = {
+        route = "/lua-pipeline-benchmark",
+        purpose = "A/B test Phase 1 performance improvements",
+        expectation = "Reduced memory allocations and faster execution"
+      }
+    }
+  `
+
 GET /test3
   |> jq: `{message: "Hello World", status: "success"}`
   |> result
@@ -243,7 +379,7 @@ GET /test5
   }`
   |> result
     ok(200):
-      |> jq: `{success: true, data: .result}`
+      |> jq: `{success: true, data: .}`
     authRequired(401):
       |> jq: `{
         error: "Authentication required",
@@ -277,19 +413,20 @@ GET /test6
 
 GET /test7
   |> lua: `
-    -- Test executeSql function in Lua
-    local result, err = executeSql("SELECT * FROM teams LIMIT 5")
-    
+    -- Test executeSql function in Lua with parameterized queries
+    local limit = 5
+    local result, err = executeSql("SELECT * FROM teams LIMIT $1", {limit})
+
     if err then
       return {
         error = "Database error: " .. err,
-        sql = "SELECT * FROM teams LIMIT 5"
+        sql = "SELECT * FROM teams LIMIT $1"
       }
     end
-    
+
     return {
-      message = "Lua executeSql test successful",
-      sql = "SELECT * FROM teams LIMIT 5",
+      message = "Lua executeSql test successful (parameterized)",
+      sql = "SELECT * FROM teams LIMIT $1",
       data = result,
       luaVersion = _VERSION
     }
@@ -383,8 +520,8 @@ handlebars navPartial = `
 `
 
 GET /test-partials
-  |> jq: `{ 
-    title: "Welcome", 
+  |> jq: `{
+    title: "Welcome",
     description: "This is a test card",
     siteName: "My Website"
   }`
@@ -479,8 +616,7 @@ POST /debug/test-hash
   |> auth: "register"
   |> jq: `{
     message: "Test hash generation (this will fail but show us what's happening)",
-    body: .body,
-    errors: .errors
+    body: .body
   }`
 
 config cache {
@@ -500,7 +636,7 @@ GET /cache-test
     random: (now % 1000)
   }`
 
-GET /no-cache-test  
+GET /no-cache-test
   |> jq: `{
     message: "No cache here",
     timestamp: now,
@@ -569,12 +705,13 @@ GET /api/search
     ttl: 15
     enabled: true
   `
-  |> jq: `{ 
+  |> jq: `{
     sqlParams: [.query.q // "default", .query.category // "all"],
     search_term: .query.q,
     search_category: .query.category
   }`
   |> pg: `SELECT pg_sleep(0.3), $1 as term, $2 as category, 'Search results' as result_type, now() as searched_at`
+  |> debug: `level: debug, includeBody: true, includeHeaders: true`
   |> jq: `{
     search_term: .data.rows[0].term,
     category: .data.rows[0].category,
@@ -594,7 +731,7 @@ config log {
   timestamp: true
 }
 
-  
+
 GET /api/users/:id
   |> log: `level: debug, includeBody: true, includeHeaders: true`
   |> pg: `SELECT * FROM users WHERE id = $1`
@@ -769,9 +906,9 @@ GET /login-page
             <h1 class="text-3xl font-bold text-gray-800 mb-2">Welcome Back</h1>
             <p class="text-gray-600">{{message}}</p>
           </div>
-          
+
           <div id="login-response" class="mb-4"></div>
-          
+
           <form hx-post="/login" hx-target="#login-response" hx-swap="innerHTML" class="space-y-4">
             <div>
               <label for="login" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
@@ -785,20 +922,20 @@ GET /login-page
               Sign In
             </button>
           </form>
-          
+
           <div class="mt-6 text-center">
             <p class="text-sm text-gray-600">
-              Don't have an account? 
+              Don't have an account?
               <a href="/register-page" class="text-blue-500 hover:text-blue-600 font-medium">Sign up</a>
             </p>
           </div>
-          
+
           <div class="mt-4 text-center">
             <a href="/hello" class="text-sm text-gray-500 hover:text-gray-700">← Back to Home</a>
           </div>
         </div>
       </div>
-      
+
       <script>
         // Redirect to todos on successful login
         document.body.addEventListener('htmx:afterRequest', function(event) {
@@ -832,9 +969,9 @@ GET /register-page
             <h1 class="text-3xl font-bold text-gray-800 mb-2">Create Account</h1>
             <p class="text-gray-600">{{message}}</p>
           </div>
-          
+
           <div id="register-response" class="mb-4"></div>
-          
+
           <form hx-post="/register" hx-target="#register-response" hx-swap="innerHTML" class="space-y-4">
             <div>
               <label for="login" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
@@ -852,20 +989,20 @@ GET /register-page
               Create Account
             </button>
           </form>
-          
+
           <div class="mt-6 text-center">
             <p class="text-sm text-gray-600">
-              Already have an account? 
+              Already have an account?
               <a href="/login-page" class="text-blue-500 hover:text-blue-600 font-medium">Sign in</a>
             </p>
           </div>
-          
+
           <div class="mt-4 text-center">
             <a href="/hello" class="text-sm text-gray-500 hover:text-gray-700">← Back to Home</a>
           </div>
         </div>
       </div>
-      
+
       <script>
         // Redirect to login on successful registration
         document.body.addEventListener('htmx:afterRequest', function(event) {
@@ -940,7 +1077,7 @@ GET /todos
               </form>
               <div id="form-response"></div>
             </div>
-            
+
             <ul id="todo-list" class="space-y-3">
               {{#each todos}}
                 {{> todoItemPartial}}
@@ -958,36 +1095,34 @@ GET /todos
 
 POST /todos/add
   |> auth: "required"
+  |> validate: `
+    title: string(3..30)
+  `
+  |> jq: `. + {
+    sqlParams: [.body.title, false, .user.id]
+  }`
+  |> pg: `INSERT INTO todos (title, completed, user_id) VALUES ($1, $2, $3) RETURNING *`
   |> result
-    ok(200):
-      |> validate: `
-        title: string(3..30)
+    ok(201):
+      |> jq: `(.data.rows[0] | . + {id: (.id | tostring)})`
+      |> handlebars: `
+        <div hx-swap-oob="afterbegin:#todo-list">
+          {{>todoItemPartial}}
+        </div>
+        <input type="text" id="title" name="title" required class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" value="" hx-swap-oob="true">
       `
-      |> jq: `. + { 
-        sqlParams: [.body.title, false, .user.id]
+    validationError(400):
+      |> jq: `{
+        error: "Validation failed",
+        field: .errors[0].field,
+        rule: .errors[0].rule,
+        message: .errors[0].message
       }`
-      |> pg: `INSERT INTO todos (title, completed, user_id) VALUES ($1, $2, $3) RETURNING *`
-      |> result
-        ok(201):
-          |> jq: `(.data.rows[0] | . + {id: (.id | tostring)})`
-          |> handlebars: `
-            <div hx-swap-oob="afterbegin:#todo-list">
-              {{>todoItemPartial}}
-            </div>
-            <input type="text" id="title" name="title" required class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" value="" hx-swap-oob="true">
-          `
-        validationError(400):
-          |> jq: `{
-            error: "Validation failed",
-            field: .errors[0].field,
-            rule: .errors[0].rule,
-            message: .errors[0].message
-          }`
-          |> handlebars: `
-            {{#*inline "errorTitle"}}Validation Error{{/inline}}
-            {{#*inline "errorMessage"}}{{message}}{{/inline}}
-            {{> errorAlert}}
-          `
+      |> handlebars: `
+        {{#*inline "errorTitle"}}Validation Error{{/inline}}
+        {{#*inline "errorMessage"}}{{message}}{{/inline}}
+        {{> errorAlert}}
+      `
     authError(401):
       |> handlebars: `
         {{<errorAlert}}
@@ -995,6 +1130,11 @@ POST /todos/add
           {{$errorMessage}}Please log in to add todos.{{/errorMessage}}
         {{/errorAlert}}
       `
+    default(500):
+      |> jq: `{
+        error: "Internal server error",
+        message: .errors[0].message
+      }`
 
 POST /todos/:id/toggle
   |> auth: "required"
@@ -1002,7 +1142,7 @@ POST /todos/:id/toggle
     ok(200):
       |> jq: `{ sqlParams: [.params.id, .user.id], todoId: .params.id }`
       |> pg: `SELECT * FROM todos WHERE id = $1 AND user_id = $2`
-      |> jq: `{ 
+      |> jq: `{
         sqlParams: [(.data.rows[0].completed | not), .todoId],
         currentTodo: .data.rows[0]
       }`
@@ -1047,21 +1187,18 @@ handlebars todoItemPartial = `
   </li>
 `
 
-## Test routes for new resultName functionality
+## Test routes for named result functionality
 
-# Test explicit resultName functionality
+# Test explicit @result functionality
 GET /test/named-query/:id
-  |> jq: `{ resultName: "userProfile" }`
-  |> pg: `SELECT 1 as id, 'Test User' as name, 'test@example.com' as email`
+  |> pg: `SELECT 1 as id, 'Test User' as name, 'test@example.com' as email` @result(userProfile)
   |> jq: `{ user: .data.userProfile }`
 
 # Test multiple named results
 GET /test/multiple/:id
-  |> jq: `{ resultName: "userInfo" }`
-  |> pg: `SELECT 1 as id, 'Test User' as name`
-  |> jq: `{ resultName: "userTeams" }`
-  |> pg: `SELECT 1 as id, 'Engineering' as name UNION SELECT 2 as id, 'Product' as name`
-  |> jq: `{ 
+  |> pg: `SELECT 1 as id, 'Test User' as name` @result(userInfo)
+  |> pg: `SELECT 1 as id, 'Engineering' as name UNION SELECT 2 as id, 'Product' as name` @result(userTeams)
+  |> jq: `{
       profile: .data.userInfo,
       teams: .data.userTeams
     }`
@@ -1073,14 +1210,14 @@ pg getTeamsQuery = `SELECT 1 as id, 'Auto Team' as name`
 GET /test/auto-naming/:id
   |> pg: getUserQuery
   |> pg: getTeamsQuery
-  |> jq: `{ 
+  |> jq: `{
       user: .data.getUserQuery,
       teams: .data.getTeamsQuery,
       hasUserData: (.data.getUserQuery != null),
       hasTeamsData: (.data.getTeamsQuery != null)
     }`
 
-# Test that legacy behavior is preserved (no resultName, no variable)
+# Test unnamed behavior (no @result, no variable)
 GET /test/legacy/:id
   |> pg: `SELECT 1 as id, 'Legacy User' as name`
 
@@ -1090,25 +1227,25 @@ GET /test/legacy/:id
 GET /test-fetch
   |> fetch: `https://api.github.com/zen`
 
-## GET with fetchUrl override
-GET /test-fetch-override
-  |> jq: `{ fetchUrl: "https://api.github.com/zen" }`
-  |> fetch: `https://example.com`
+## GET with dynamic URL
+GET /test-fetch-dynamic
+  |> fetch("https://api.github.com/zen")
 
 ## POST with body
 GET /test-fetch-post
-  |> jq: `{
-    fetchMethod: "POST",
-    fetchBody: { name: "test", value: 123 },
-    fetchHeaders: { "Content-Type": "application/json" }
-  }`
-  |> fetch: `https://api.github.com/zen`
+  |> fetch(
+    "https://api.github.com/zen",
+    {
+      method: "POST",
+      body: { name: "test", value: 123 },
+      headers: { "Content-Type": "application/json" }
+    }
+  )
 
 ## Named result
 GET /test-fetch-named
-  |> jq: `{ resultName: "apiCall" }`
-  |> fetch: `https://api.github.com/zen`
-  |> jq: `{ 
+  |> fetch: `https://api.github.com/zen` @result(apiCall)
+  |> jq: `{
     response: .data.apiCall.response,
     status: .data.apiCall.status,
     success: (.data.apiCall.status == 200)
@@ -1120,8 +1257,68 @@ GET /test-fetch-error
 
 ## Test timeout (if httpbin is slow)
 GET /test-fetch-timeout
-  |> jq: `{ fetchTimeout: 1 }`
-  |> fetch: `https://httpbin.org/delay/5`
+  |> fetch("https://httpbin.org/delay/5", { timeout: 1 })
+
+## Test Lua Script Preloading Performance
+# These routes test the performance improvements from preloading Lua scripts
+
+GET /lua-preload-test
+  |> lua: `
+
+    local numbers = {10, 20, 30, 40, 50}
+    local sum = mathUtils.sum(numbers)
+    local avg = mathUtils.average(numbers)
+    local fib15 = mathUtils.fibonacci(15)
+    local primeCount = mathUtils.countPrimes(100)
+
+    return {
+      message = "Successfully loaded preloaded Lua module",
+      numbers = numbers,
+      sum = sum,
+      average = avg,
+      fibonacci_15 = fib15,
+      primes_up_to_100 = primeCount,
+      note = "This uses preloaded scripts (zero filesystem I/O on request path!)"
+    }
+  `
+
+GET /lua-preload-bench
+  |> lua: `
+
+
+    -- Do some calculations
+    local results = {}
+    for i = 1, 20 do
+      results[i] = mathUtils.fibonacci(i)
+    end
+
+    local primes = mathUtils.countPrimes(500)
+
+    return {
+      message = "Lua script preload benchmark",
+      fibonacci_sequence = results,
+      primes_up_to_500 = primes,
+      performance_note = "Script loaded from memory, not filesystem!"
+    }
+  `
+
+GET /lua-script-stress
+  |> lua: `
+    -- Stress test: require script many times in a single request
+    local iterations = 50
+    local results = {}
+
+    for i = 1, iterations do
+      results[i] = mathUtils.fibonacci(10)
+    end
+
+    return {
+      message = "Stress test completed",
+      iterations = iterations,
+      note = "Required script 50 times - all from memory cache!",
+      sample_results = {results[1], results[25], results[50]}
+    }
+  `
 
 ## Tags Feature Demo (v2.0+)
 
@@ -1147,3 +1344,3505 @@ GET /tagged-route
 # @async(worker) - Execution hints for async processing
 # @flag(feature-name) - Feature flags
 # @flag(beta,staff) - Multiple feature flag args
+
+# Set environment with: WEBPIPE_ENV=production or WEBPIPE_ENV=development
+
+## Async/Join Feature Demo (v2.0+)
+
+GET /dashboard-sync
+  |> fetch: `https://jsonplaceholder.typicode.com/users/1`
+  |> jq: `{ user: .data.response }`
+  |> fetch: `https://jsonplaceholder.typicode.com/posts?userId=1&_limit=5`
+  |> jq: `. + { posts: .data.response }`
+  |> fetch: `https://jsonplaceholder.typicode.com/todos?userId=1&_limit=5`
+  |> jq: `. + { todos: .data.response }`
+  |> jq: `{
+    pageTitle: "User Dashboard (Sync)",
+    user: .user,
+    recentPosts: .posts,
+    pendingTodos: .todos | map(select(.completed == false))
+  }`
+  |> handlebars: `
+    <html>
+      <head><title>{{pageTitle}}</title></head>
+      <body>
+        <h1>{{pageTitle}}</h1>
+
+        <section>
+          <h2>User Info</h2>
+          <p><strong>Name:</strong> {{user.name}}</p>
+          <p><strong>Email:</strong> {{user.email}}</p>
+          <p><strong>Company:</strong> {{user.company.name}}</p>
+        </section>
+
+        <section>
+          <h2>Recent Posts</h2>
+          <ul>
+            {{#each recentPosts}}
+              <li><strong>{{title}}</strong><br>{{body}}</li>
+            {{/each}}
+          </ul>
+        </section>
+
+        <section>
+          <h2>Pending Todos</h2>
+          <ul>
+            {{#each pendingTodos}}
+              <li>{{title}}</li>
+            {{/each}}
+          </ul>
+        </section>
+      </body>
+    </html>
+  `
+
+GET /dashboard
+  |> fetch: `https://jsonplaceholder.typicode.com/users/1` @async(user)
+  |> fetch: `https://jsonplaceholder.typicode.com/posts?userId=1&_limit=5` @async(posts)
+  |> fetch: `https://jsonplaceholder.typicode.com/todos?userId=1&_limit=5` @async(todos)
+  |> jq: `{
+    pageTitle: "User Dashboard",
+    timestamp: now
+  }`
+  |> join: `user,posts,todos`
+  |> jq: `{
+    page: .pageTitle,
+    loadedAt: .timestamp,
+    user: .async.user.data.response,
+    recentPosts: .async.posts.data.response,
+    pendingTodos: .async.todos.data.response
+  }`
+  |> handlebars: `
+    <html>
+      <head><title>{{page}}</title></head>
+      <body>
+        <h1>{{page}}</h1>
+        <p>Loaded at: {{loadedAt}}</p>
+
+        <section>
+          <h2>User Info</h2>
+          <p><strong>Name:</strong> {{user.name}}</p>
+          <p><strong>Email:</strong> {{user.email}}</p>
+          <p><strong>Company:</strong> {{user.company.name}}</p>
+        </section>
+
+        <section>
+          <h2>Recent Posts</h2>
+          <ul>
+            {{#each recentPosts}}
+              <li><strong>{{title}}</strong><br>{{body}}</li>
+            {{/each}}
+          </ul>
+        </section>
+
+        <section>
+          <h2>Pending Todos</h2>
+          <ul>
+            {{#each pendingTodos}}
+              <li>{{title}}</li>
+            {{/each}}
+          </ul>
+        </section>
+      </body>
+    </html>
+  `
+
+assert WeatherResponse = `{
+  async: {
+    openmeteo: {
+      error?: string,
+      data: {
+        response: {
+          current_weather: { temperature: number }
+        }
+      }
+    },
+    goweather: {
+      error?: string,
+      data: {
+        response: {
+          description: string,
+          temperature?: string
+        }
+      }
+    }
+  }
+}`
+
+GET /weather/:city
+  |> fetch("https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current_weather=true") @async(openmeteo)
+  |> fetch("https://goweather.herokuapp.com/weather/" + .params.city) @async(goweather)
+  |> join: `openmeteo,goweather`
+  |> assert: WeatherResponse
+  |> jq: `{
+    city: .params.city,
+    temperature: (.async.openmeteo.data.response.current_weather.temperature // .async.goweather.data.response.temperature),
+    description: (.async.goweather.data.response.description // "Data from Open-Meteo"),
+    sources: {
+      openmeteo: (.async.openmeteo.error // "success"),
+      goweather: (.async.goweather.error // "success")
+    }
+  }`
+  |> handlebars: `
+    <h1>Weather for {{city}}</h1>
+    <p><strong>Temperature:</strong> {{temperature}}°C</p>
+    <p><strong>Conditions:</strong> {{description}}</p>
+    <details>
+      <summary>API Sources</summary>
+      <ul>
+        <li>Open-Meteo: {{sources.openmeteo}}</li>
+        <li>GoWeather: {{sources.goweather}}</li>
+      </ul>
+    </details>
+  `
+
+GET /parallel-api-demo
+  |> fetch: `https://api.github.com/users/github` @async(github)
+  |> fetch: `https://api.coindesk.com/v1/bpi/currentprice.json` @async(bitcoin)
+  |> fetch: `https://official-joke-api.appspot.com/random_joke` @async(joke)
+  |> join: `["github","bitcoin","joke"]`
+  |> jq: `{
+    githubUser: .async.github.data.response.login,
+    bitcoinPrice: .async.bitcoin.data.response.bpi.USD.rate,
+    randomJoke: .async.joke.data.response.setup + " - " + .async.joke.data.response.punchline
+  }`
+
+GET /slow-sync
+  |> lua: `
+    -- Simulate ~2s delay and preserve prior fields
+    local start = os.time()
+    while os.time() - start < 2 do end
+    local out = {}
+    if type(request) == "table" then
+      for k, v in pairs(request) do out[k] = v end
+    end
+    out.data = { response = { url = "lua://delay/2/step1" } }
+    return out
+  `
+  |> jq: `{ first: .data.response, step: "1/3" }`
+  |> lua: `
+    -- Simulate ~2s delay and preserve prior fields
+    local start = os.time()
+    while os.time() - start < 2 do end
+    local out = {}
+    if type(request) == "table" then
+      for k, v in pairs(request) do out[k] = v end
+    end
+    out.data = { response = { url = "lua://delay/2/step2" } }
+    return out
+  `
+  |> jq: `. + { second: .data.response, step: "2/3" }`
+  |> lua: `
+    -- Simulate ~2s delay and preserve prior fields
+    local start = os.time()
+    while os.time() - start < 2 do end
+    local out = {}
+    if type(request) == "table" then
+      for k, v in pairs(request) do out[k] = v end
+    end
+    out.data = { response = { url = "lua://delay/2/step3" } }
+    return out
+  `
+  |> jq: `. + { third: .data.response, step: "3/3" }`
+  |> jq: `{
+    message: "All requests completed synchronously",
+    totalTime: "~6 seconds (2+2+2)",
+    results: [.first.url, .second.url, .third.url]
+  }`
+
+GET /slow-async
+  |> lua: `
+    -- Simulate ~2s delay and preserve prior fields
+    local start = os.time()
+    while os.time() - start < 2 do end
+    local out = {}
+    if type(request) == "table" then
+      for k, v in pairs(request) do out[k] = v end
+    end
+    out.data = { response = { url = "lua://delay/2/step1" } }
+    return out
+  ` @async(req1)
+  |> lua: `
+    -- Simulate ~2s delay and preserve prior fields
+    local start = os.time()
+    while os.time() - start < 2 do end
+    local out = {}
+    if type(request) == "table" then
+      for k, v in pairs(request) do out[k] = v end
+    end
+    out.data = { response = { url = "lua://delay/2/step2" } }
+    return out
+  ` @async(req2)
+  |> lua: `
+    -- Simulate ~2s delay and preserve prior fields
+    local start = os.time()
+    while os.time() - start < 2 do end
+    local out = {}
+    if type(request) == "table" then
+      for k, v in pairs(request) do out[k] = v end
+    end
+    out.data = { response = { url = "lua://delay/2/step3" } }
+    return out
+  ` @async(req3)
+  |> join: `req1,req2,req3`
+  |> jq: `{
+    message: "All requests completed in parallel",
+    totalTime: "~2 seconds (all parallel)",
+    results: [
+      .async.req1.data.response.url,
+      .async.req2.data.response.url,
+      .async.req3.data.response.url
+    ]
+  }`
+
+query todos =
+  |> auth: "required"
+  |> jq: `{ sqlParams: [.context.user.id] }`
+  |> pg: `
+    SELECT id, title, completed, created_at, updated_at
+    FROM todos
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+  `
+  |> jq: `.data.rows`
+
+
+mutation toggleTodo =
+  |> auth: "required"
+  |> jq: `{ sqlParams: [.args.id, .context.user.id] }`
+  |> pg: `
+    UPDATE todos
+    SET completed = NOT completed,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1 AND user_id = $2
+    RETURNING *
+  `
+  |> jq: `.data.rows[0]`
+
+## GraphQL Schema and Resolvers Demo
+
+graphqlSchema = `
+  type User {
+    id: ID!
+    name: String!
+    email: String!
+    createdAt: String!
+  }
+
+  type Post {
+    id: ID!
+    title: String!
+    body: String!
+    userId: Int!
+    published: Boolean!
+  }
+
+  type Stats {
+    totalUsers: Int!
+    totalPosts: Int!
+    activeUsers: Int!
+  }
+
+  type Employee {
+    id: ID!
+    teamId: ID!
+    name: String!
+    email: String!
+  }
+
+  type Team {
+    id: ID!
+    name: String!
+    employees(limit: Int): [Employee!]!
+  }
+
+  type SlowQuery {
+    result: String!
+    completedAt: String!
+  }
+
+  type Query {
+    currentTime: String!
+    randomNumber: Int!
+    users(limit: Int): [User!]!
+    user(id: Int!): User
+    posts(limit: Int): [Post!]!
+    stats: Stats!
+    slowQuery1: SlowQuery!
+    slowQuery2: SlowQuery!
+    slowQuery3: SlowQuery!
+    teams: [Team!]!
+    team(id: ID!): Team!
+    employees(teamId: ID!): [Employee!]!
+    employee(id: ID!): Employee!
+  }
+
+  type Mutation {
+    createUser(name: String!, email: String!): User!
+    createPost(title: String!, body: String!): Post!
+    updatePost(id: Int!, title: String, body: String): Post!
+    deletePost(id: Int!): Boolean!
+  }
+`
+
+# Query resolver: return current timestamp
+query currentTime =
+  |> pg: `SELECT NOW()::text as time`
+  |> jq: `.data.rows[0].time`
+
+# Query resolver: return a random number
+query randomNumber =
+  |> pg: `SELECT floor(random() * 1000)::int as number`
+  |> jq: `.data.rows[0].number`
+
+# Query resolver: return mock users
+query users =
+  |> pg: `
+    SELECT
+      id,
+      'User ' || id as name,
+      'user' || id || '@example.com' as email,
+      NOW() - (id || ' days')::interval as "createdAt"
+    FROM generate_series(1, 5) as id
+  `
+  |> jq: `.data.rows`
+
+# Query resolver: return single user by ID
+query user =
+  |> jq: `{ sqlParams: [.id] }`
+  |> pg: `
+    SELECT
+      $1 as id,
+      'User ' || $1 as name,
+      'user' || $1 || '@example.com' as email,
+      NOW()::text as "createdAt"
+  `
+  |> jq: `.data.rows[0]`
+
+# Query resolver: return mock posts with optional limit
+query posts =
+  |> jq: `{ sqlParams: [.limit // 10] }`
+  |> pg: `
+    SELECT
+      id,
+      'Post Title ' || id as title,
+      'This is the body content for post ' || id as body,
+      (id % 5) + 1 as "userId",
+      (random() > 0.5) as published
+    FROM generate_series(1, $1) as id
+  `
+  |> jq: `.data.rows`
+
+# Query resolver: return aggregate stats
+query stats =
+  |> pg: `
+    SELECT
+      5 as "totalUsers",
+      100 as "totalPosts",
+      3 as "activeUsers"
+  `
+  |> jq: `.data.rows[0]`
+
+# Mutation resolver: create a new user
+mutation createUser =
+  |> validate: `{
+    name: string(1..100),
+    email: string(5..100)
+  }`
+  |> jq: `{ sqlParams: [.name, .email] }`
+  |> pg: `
+    SELECT
+      floor(random() * 1000)::int as id,
+      $1 as name,
+      $2 as email,
+      NOW()::text as "createdAt"
+  `
+  |> jq: `.data.rows[0]`
+
+# Mutation resolver: create a post
+mutation createPost =
+  |> validate: `{
+    title: string(5..100),
+    body: string(10..500)
+  }`
+  |> jq: `{ sqlParams: [.title, .body] }`
+  |> pg: `
+    SELECT
+      floor(random() * 1000)::int as id,
+      $1 as title,
+      $2 as body,
+      1 as "userId",
+      true as published
+  `
+  |> jq: `.data.rows[0]`
+
+# Mutation resolver: update a post
+mutation updatePost =
+  |> validate: `{
+    id: number
+  }`
+  |> jq: `{ sqlParams: [.id, .title // "Updated Title", .body // "Updated body"] }`
+  |> pg: `
+    SELECT
+      $1 as id,
+      $2 as title,
+      $3 as body,
+      1 as "userId",
+      true as published
+  `
+  |> jq: `.data.rows[0]`
+
+# Mutation resolver: delete a post
+mutation deletePost =
+  |> jq: `{ sqlParams: [.id] }`
+  |> pg: `SELECT $1 as id`
+  |> jq: `(.data.rows | length > 0)`
+
+# GraphQL endpoint: execute GraphQL queries
+# POST /graphql
+#   |> jq: `{ graphqlParams: .variables }`
+#   |> graphql: `.query`
+
+# Test route: simple query
+GET /test-graphql-simple
+  |> graphql: `
+    query {
+      currentTime
+      randomNumber
+    }
+  `
+
+# Test route: query with arguments
+GET /test-graphql-args
+  |> jq: `.graphqlParams = { id: 1, limit: 3 }`
+  |> graphql: `
+    query($id: Int!, $limit: Int) {
+      user(id: $id) {
+        id
+        name
+        email
+      }
+      posts(limit: $limit) {
+        id
+        title
+      }
+    }
+  `
+
+graphql testMutation = `
+  mutation($title: String!, $body: String!) {
+    createPost(title: $title, body: $body) {
+      id
+      title
+      body
+    }
+  }
+`
+
+POST /test-graphql-mutation
+  |> jq: `.graphqlParams = { title: .body.title, body: .body.body }`
+  |> graphql: testMutation
+
+# Test route: multiple queries with @result
+GET /test-graphql-multi
+  |> graphql: `query { currentTime }` @result(time)
+  |> graphql: `query { users { id name email } }` @result(users)
+  |> graphql: `query { stats { totalUsers totalPosts activeUsers } }` @result(stats)
+
+# Test route: single query with users (for debugging)
+GET /test-graphql-users-only
+  |> graphql: `query { users { id name email } }`
+
+# Test route: single graphql call with @result
+GET /test-graphql-single-result
+  |> graphql: `query { users { id name email } }` @result(users)
+
+# Test route: test just first step of multi
+GET /test-graphql-first-step
+  |> graphql: `query { currentTime }` @result(time)
+
+# Test route: parallel GraphQL queries with async and join
+# Fires multiple independent GraphQL queries in parallel for maximum performance
+GET /test-graphql-async-parallel
+  |> graphql: `query { users { id name email } }` @async(usersQuery)
+  |> graphql: `query { stats { totalUsers totalPosts activeUsers } }` @async(statsQuery)
+  |> graphql: `query { posts(limit: 5) { id title userId published } }` @async(postsQuery)
+  |> graphql: `query { currentTime randomNumber }` @async(timeQuery)
+  |> join: `usersQuery, statsQuery, postsQuery, timeQuery`
+  |> jq: `{
+    dashboard: {
+      loadedAt: .async.timeQuery.data.currentTime,
+      randomNumber: .async.timeQuery.data.randomNumber,
+      statistics: .async.statsQuery.data.stats,
+      users: .async.usersQuery.data.users,
+      recentPosts: .async.postsQuery.data.posts,
+      metadata: {
+        queriesExecuted: 4,
+        executionMode: "parallel"
+      }
+    }
+  }`
+
+# Comparison route: same queries executed synchronously (slower)
+GET /test-graphql-sync-sequential
+  |> graphql: `query { users { id name email } }` @result(users)
+  |> graphql: `query { stats { totalUsers totalPosts activeUsers } }` @result(stats)
+  |> graphql: `query { posts(limit: 5) { id title userId published } }` @result(posts)
+  |> graphql: `query { currentTime randomNumber }` @result(time)
+  |> jq: `{
+    dashboard: {
+      loadedAt: .data.time.data.currentTime,
+      randomNumber: .data.time.data.randomNumber,
+      statistics: .data.stats,
+      users: .data.users,
+      recentPosts: .data.posts,
+      metadata: {
+        queriesExecuted: 4,
+        executionMode: "sequential"
+      }
+    }
+  }`
+
+GET /ok
+  |> jq: `.`
+
+## Parallel pg_sleep Demo - Async Join Performance Test
+# This demonstrates how 3 independent 2-second database sleeps complete in ~2 seconds total
+# when executed in parallel via async/join, instead of ~6 seconds sequentially.
+
+# Query resolvers that each sleep for 2 seconds
+query slowQuery1 =
+  |> pg: `SELECT pg_sleep(2), 'Query 1 complete' as result, NOW()::text as "completedAt"`
+  |> jq: `.data.rows[0]`
+
+query slowQuery2 =
+  |> pg: `SELECT pg_sleep(2), 'Query 2 complete' as result, NOW()::text as "completedAt"`
+  |> jq: `.data.rows[0]`
+
+query slowQuery3 =
+  |> pg: `SELECT pg_sleep(2), 'Query 3 complete' as result, NOW()::text as "completedAt"`
+  |> jq: `.data.rows[0]`
+
+graphql slowQuery1 = `query { slowQuery1 { result completedAt } }`
+graphql slowQuery2 = `query { slowQuery2 { result completedAt } }`
+graphql slowQuery3 = `query { slowQuery3 { result completedAt } }`
+
+# Parallel execution route - should complete in ~2 seconds
+GET /test-parallel-sleep
+  |> graphql: slowQuery1 @async(q1)
+  |> graphql: slowQuery2 @async(q2)
+  |> graphql: slowQuery3 @async(q3)
+  |> jq: `{ startedAt: now }`
+  |> join: `q1, q2, q3`
+  |> jq: `{ totalTime: (now - .startedAt) }`
+  |> jq: `{
+    totalTime: .totalTime,
+    message: "All 3 queries with 2-second sleeps completed in parallel!",
+    results: {
+      query1: .async.q1.data.slowQuery1,
+      query2: .async.q2.data.slowQuery2,
+      query3: .async.q3.data.slowQuery3
+    },
+  }`
+
+# Sequential execution route for comparison - should take ~6 seconds
+GET /test-sequential-sleep
+  |> jq: `{ startedAt: now }`
+  |> graphql: slowQuery1 @result(q1)
+  |> graphql: slowQuery2 @result(q2)
+  |> graphql: slowQuery3 @result(q3)
+  |> jq: `{ totalTime: (now - .startedAt) }`
+  |> debug: `test-sequential-sleep`
+  |> jq: `{
+    totalTime: .totalTime,
+    message: "All 3 queries completed sequentially",
+    results: {
+      query1: .data.q1.data.slowQuery1,
+      query2: .data.q2.data.slowQuery2,
+      query3: .data.q3.data.slowQuery3
+    }
+  }`
+
+## Feature Flags Demo (v2.0+)
+# Demonstrates dynamic feature flags with 2/3 probability rollout
+
+featureFlags =
+  |> lua: `
+    -- Enable "experimental-feature" flag 2/3rds of the time
+
+    -- Generate random number between 0 and 1
+    math.randomseed(os.time() * 1000 + (request.headers and request.headers["x-request-id"] and tonumber(request.headers["x-request-id"]) or 0))
+    local rand = math.random()
+
+    -- Enable flag if random value is less than 0.666 (2/3)
+    -- Use new setFlag API
+    setFlag("experimental-feature", (rand < 0.6666))
+
+    -- Always enable beta flag for internal users
+    if request.user and request.user.email and string.find(request.user.email, "@internal.com") then
+      setFlag("beta-features", true)
+    else
+      setFlag("beta-features", false)
+    end
+
+    -- No need to return metadata anymore
+    return {}
+  `
+
+GET /feature-test
+  |> jq: `{ message: "Standard feature (no flag required)" }` @!flag(experimental-feature)
+  |> jq: `{ message: "Experimental feature enabled!" }` @flag(experimental-feature)
+
+GET /feature-gui
+  |> jq: `{
+    title: "Standard Dashboard",
+    message: "Welcome to your dashboard",
+    version: "1.0"
+  }` @!flag(experimental-feature)
+  |> handlebars: `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>{{title}}</title>
+      <style>
+        body { font-family: Arial, sans-serif; background: #f5f5f5; color: #333; padding: 40px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        .info { background: #ecf0f1; padding: 15px; border-radius: 5px; margin-top: 20px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>{{title}}</h1>
+        <p>{{message}}</p>
+        <div class="info">
+          <strong>Version:</strong> {{version}}
+        </div>
+      </div>
+    </body>
+    </html>
+  ` @!flag(experimental-feature)
+  |> jq: `{
+    title: "Experimental Dashboard",
+    features: ["Real-time Analytics", "AI-Powered Insights", "Advanced Filtering"],
+    theme: "modern"
+  }` @flag(experimental-feature)
+  |> handlebars: `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>{{title}}</title>
+      <style>
+        body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; }
+        .container { max-width: 800px; margin: 0 auto; background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); padding: 30px; border-radius: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .badge { background: #10b981; padding: 5px 15px; border-radius: 20px; font-size: 0.8em; display: inline-block; margin-bottom: 20px; }
+        .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 30px; }
+        .feature-card { background: rgba(255,255,255,0.2); padding: 20px; border-radius: 10px; text-align: center; transition: transform 0.2s; }
+        .feature-card:hover { transform: translateY(-5px); }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>{{title}}</h1>
+        <span class="badge">EXPERIMENTAL</span>
+        <p style="font-size: 1.2em; opacity: 0.9;">Experience the next generation of features</p>
+        <div class="features">
+          {{#each features}}
+          <div class="feature-card">
+            <strong>{{this}}</strong>
+          </div>
+          {{/each}}
+        </div>
+      </div>x
+    </body>
+    </html>
+  ` @flag(experimental-feature)
+
+GET /test-rate-limit
+  |> rateLimit: `
+    keyTemplate: ip-{ip}-route-{method}-{path}
+    limit: 1
+    window: 10s
+  `
+  |> jq: `{ message: "Rate limited" }`
+
+## JQ Conditional Demo
+# Branch local value shaping with standard JQ conditionals.
+
+GET /test-jq-if-simple
+  |> jq: `{ count: 15 }`
+  |> jq: `
+    if .count > 10 then
+      { status: "high", count: .count }
+    else
+      { status: "low", count: .count }
+    end
+  `
+
+GET /test-jq-if/:value
+  |> jq: `{ value: (.params.value | tonumber) }`
+  |> jq: `
+    if .value > 50 then
+      { category: "high", value: .value }
+    else
+      { category: "low", value: .value }
+    end
+  `
+
+describe "JQ conditional feature"
+  it "executes then branch when condition is true"
+    when calling GET /test-jq-if-simple
+    then output `.status` equals "high"
+    and output `.count` equals 15
+
+  it "executes else branch when condition is false"
+    when calling GET /test-jq-if/10
+    then output `.category` equals "low"
+
+# ========================================
+# Context Injection Tests
+# ========================================
+# Test JQ middleware with $context
+GET /test-context-jq
+  |> jq: `{
+    has_context: ($context != null),
+    has_flags: ($context.flags != null),
+    message: "JQ context works"
+  }`
+
+# Test Lua middleware with context variable
+GET /test-context-lua
+  |> lua: `
+    return {
+      has_context = (context ~= nil),
+      has_flags = (context.flags ~= nil),
+      message = "Lua context works"
+    }
+  `
+
+# Test Handlebars middleware with context
+GET /test-context-handlebars
+  |> jq: `{ name: "WebPipe" }`
+  |> handlebars: `<p>Hello {{name}}! Env: {{context.env}}</p>`
+
+# Test rate limit metadata in context
+GET /test-context-ratelimit
+  |> rateLimit: `keyTemplate: context-test, limit: 100, window: 1m`
+  |> jq: `{
+    allowed: $context.rate_limit.allowed,
+    has_limit: ($context.rate_limit.limit != null),
+    has_remaining: ($context.rate_limit.remaining != null)
+  }`
+
+# Test context with feature flags
+GET /test-context-flags
+  |> jq: `{
+    flag_count: ($context.flags | length)
+  }`
+
+describe "Context Injection"
+
+  it "injects context into JQ middleware"
+    when calling GET /test-context-jq
+    then status is 200
+    and output `.has_context` equals true
+    and output `.has_flags` equals true
+    and output `.message` equals "JQ context works"
+
+  it "injects context into Lua middleware"
+    when calling GET /test-context-lua
+    then status is 200
+    and output `.has_context` equals true
+    and output `.has_flags` equals true
+    and output `.message` equals "Lua context works"
+
+  it "injects context into Handlebars middleware"
+    when calling GET /test-context-handlebars
+    then status is 200
+    and output contains "Hello WebPipe!"
+
+  it "exposes rate limit metadata in context"
+    when calling GET /test-context-ratelimit
+    then status is 200
+    and output `.allowed` equals true
+    and output `.has_limit` equals true
+    and output `.has_remaining` equals true
+
+## Dispatch Feature Demo (v2.1+)
+# Demonstrates the new dispatch syntax as an alternative to @tag filtering on steps
+
+# Equivalent using dispatch syntax - cleaner for branching logic
+GET /feature-test-dispatch
+  |> dispatch
+    case @flag(experimental-feature):
+      |> jq: `{ message: "Experimental feature enabled!" }`
+    default:
+      |> jq: `{ message: "Standard feature (no flag required)" }`
+
+# More complex example: environment-based dispatch
+GET /env-dispatch
+  |> dispatch
+    case @env(production):
+      |> jq: `{ env: "production", debug: false, caching: true }`
+    case @env(staging):
+      |> jq: `{ env: "staging", debug: true, caching: true }`
+    case @env(development):
+      |> jq: `{ env: "development", debug: true, caching: false }`
+    default:
+      |> jq: `{ env: "unknown", debug: false, caching: false }`
+
+# Dispatch with negated tags
+GET /non-production-dispatch
+  |> dispatch
+    case @!env(production):
+      |> jq: `{
+        message: "Non-production environment",
+        debugTools: true,
+        mockData: true
+      }`
+    default:
+      |> jq: `{
+        message: "Production environment",
+        debugTools: false,
+        mockData: false
+      }`
+
+# Dispatch with multi-step pipelines
+GET /multi-step-dispatch
+  |> dispatch
+    case @flag(experimental):
+      |> jq: `{ step: 1, version: "experimental" }`
+      |> jq: `. + { step: 2, features: ["ai", "realtime"] }`
+      |> jq: `. + { step: 3, complete: true }`
+    case @flag(beta):
+      |> jq: `{ step: 1, version: "beta" }`
+      |> jq: `. + { step: 2, features: ["analytics"] }`
+    default:
+      |> jq: `{ step: 1, version: "stable", features: [] }`
+
+describe "Dispatch Feature"
+  it "routes based on feature flags"
+    when calling GET /feature-test-dispatch
+    then status is 200
+    and output `.message` contains "feature"
+
+  it "handles environment-based routing to default"
+    when calling GET /env-dispatch
+    then status is 200
+
+  it "handles negated tags in dispatch"
+    when calling GET /non-production-dispatch
+    then status is 200
+    and output `.message` contains "environment"
+
+  it "executes multi-step pipelines in dispatch branches"
+    when calling GET /multi-step-dispatch
+    then status is 200
+    and output `.step` equals 1
+    and output `.version` equals "stable"
+
+## JQ Array Mapping Demo
+# Transform arrays in-place with jq map.
+
+GET /test-map-basic
+  |> jq: `{
+    data: {
+      rows: [
+        { id: 1, name: "Alpha Team" },
+        { id: 2, name: "Beta Team" },
+        { id: 3, name: "Gamma Team" }
+      ]
+    }
+  }`
+  |> jq: `.data.rows |= map(. + { processed: true, uppercase_name: (.name | ascii_upcase) })`
+  |> jq: `{ teams: .data.rows }`
+
+describe "JQ Array Mapping"
+  it "transforms each item in an array"
+    when calling GET /test-map-basic
+    then status is 200
+    and output `.teams | length` equals 3
+    and output `.teams[0].processed` equals true
+    and output `.teams[0].uppercase_name` equals "ALPHA TEAM"
+
+## Computed Context / @when Tag Feature (v2.3+)
+# Demonstrates the new @when tag for dynamic routing based on transient request conditions.
+# Unlike @flag (static/sticky configuration), @when is for dynamic runtime routing.
+# Lua middleware can use setWhen(key, value) to classify requests.
+# Conditions are available in $context.conditions for jq and context.conditions in Lua.
+
+# Basic @when routing - Lua classifier sets condition, dispatch routes based on it
+GET /test-when-basic
+  |> lua: `setWhen("is_admin", true); return request`
+  |> dispatch
+    case @when(is_admin):
+      |> jq: `{ role: "admin", access: "full" }`
+    default:
+      |> jq: `{ role: "guest", access: "limited" }`
+
+# Test @when vs @flag isolation - they should be independent namespaces
+GET /test-when-vs-flag-isolation
+  |> lua: `setWhen("beta", true); return request`
+  |> dispatch
+    case @flag(beta):
+      |> jq: `{ error: "BUG: beta is a condition, not a flag" }`
+    case @when(beta):
+      |> jq: `{ success: true, message: "Correctly matched @when(beta)" }`
+    default:
+      |> jq: `{ error: "BUG: should have matched @when(beta)" }`
+
+# Test negated @when tag - execute when condition is NOT met
+GET /test-when-negated
+  |> lua: `setWhen("is_premium", false); return request`
+  |> dispatch
+    case @!when(is_premium):
+      |> jq: `{ message: "Free tier - upgrade for more features" }`
+    case @when(is_premium):
+      |> jq: `{ message: "Premium tier - all features unlocked" }`
+
+# Test multiple conditions with AND logic - all must be true
+GET /test-when-multiple
+  |> lua: `
+    setWhen("is_authenticated", true)
+    setWhen("is_admin", true)
+    return request
+  `
+  |> dispatch
+    case @when(is_authenticated,is_admin):
+      |> jq: `{ access: "admin_panel", level: "superuser" }`
+    case @when(is_authenticated):
+      |> jq: `{ access: "dashboard", level: "user" }`
+    default:
+      |> jq: `{ access: "login", level: "anonymous" }`
+
+# Test conditions exposed in $context for jq
+GET /test-when-context-jq
+  |> lua: `setWhen("from_mobile", true); setWhen("dark_mode", false); return request`
+  |> jq: `{
+    conditions: $context.conditions,
+    from_mobile: $context.conditions.from_mobile,
+    dark_mode: $context.conditions.dark_mode
+  }`
+
+# Test conditions exposed in context for Lua
+# Note: context is a snapshot at script start, so conditions must be set in a prior step
+GET /test-when-context-lua
+  |> lua: `setWhen("test_condition", true); return request`
+  |> lua: `
+    return {
+      conditions = context.conditions,
+      test_condition = context.conditions.test_condition or false
+    }
+  `
+
+# Test getWhen function in Lua - read back conditions set in previous step
+# Note: getWhen takes a snapshot at script start, so conditions must be set in a prior step
+GET /test-get-when
+  |> lua: `setWhen("feature_x", true); return request`
+  |> lua: `
+    local hasFeatureX = getWhen("feature_x")
+    local hasFeatureY = getWhen("feature_y")  -- not set, should be false
+    return {
+      feature_x = hasFeatureX,
+      feature_y = hasFeatureY
+    }
+  `
+
+# Test @when on individual steps (not just dispatch)
+GET /test-when-on-step
+  |> jq: `{ base: "data" }`
+  |> lua: `setWhen("add_metadata", true); return request`
+  |> jq: `. + { metadata: { timestamp: "2024-01-01" } }` @when(add_metadata)
+  |> jq: `. + { skipped: true }` @when(never_set_condition)
+
+# Test boolean expressions on individual steps
+GET /test-bool-expr-on-step
+  |> jq: `{ base: "data" }`
+  |> lua: `
+    setWhen("feature_a", true)
+    setWhen("feature_b", true)
+    setWhen("feature_c", false)
+    return request
+  `
+  # Should execute: both feature_a and feature_b are true
+  |> jq: `. + { both_ab: true }` @when(feature_a) and @when(feature_b)
+  # Should NOT execute: feature_c is false
+  |> jq: `. + { all_abc: true }` @when(feature_a) and @when(feature_b) and @when(feature_c)
+  # Should execute: feature_a is true (OR short-circuits)
+  |> jq: `. + { a_or_c: true }` @when(feature_a) or @when(feature_c)
+  # Should execute: feature_c is false, so !feature_c is true
+  |> jq: `. + { a_and_not_c: true }` @when(feature_a) and @!when(feature_c)
+  # Should NOT execute: feature_a is true, so !feature_a is false
+  |> jq: `. + { not_a: true }` @!when(feature_a)
+  # Test grouping: (a or c) and b = (true or false) and true = true
+  |> jq: `. + { grouped: true }` (@when(feature_a) or @when(feature_c)) and @when(feature_b)
+
+# Test request classifier pattern - analyze request and route accordingly
+GET /test-classifier-pattern
+  |> lua: `
+    -- Classifier: analyze request and apply semantic labels
+    local userAgent = request.headers and request.headers["user-agent"] or ""
+
+    -- Classify based on content
+    if string.find(userAgent, "Mobile") then
+      setWhen("mobile_request", true)
+    else
+      setWhen("desktop_request", true)
+    end
+
+    -- Classify based on other criteria
+    if request.path and string.find(request.path, "/api/") then
+      setWhen("api_request", true)
+    end
+
+    return request
+  `
+  |> dispatch
+    case @when(api_request):
+      |> jq: `{ format: "json", compressed: true }`
+    case @when(mobile_request):
+      |> jq: `{ format: "json", simplified: true }`
+    default:
+      |> jq: `{ format: "json", full: true }`
+
+describe "Computed Context / @when Tag Feature"
+  it "routes based on conditions set by Lua classifier"
+    when calling GET /test-when-basic
+    then status is 200
+    and output `.role` equals "admin"
+    and output `.access` equals "full"
+
+  it "isolates @when conditions from @flag feature flags"
+    when calling GET /test-when-vs-flag-isolation
+    then status is 200
+    and output `.success` equals true
+
+  it "handles negated @when tags correctly"
+    when calling GET /test-when-negated
+    then status is 200
+    and output `.message` contains "Free tier"
+
+  it "requires all conditions with multiple arguments (AND logic)"
+    when calling GET /test-when-multiple
+    then status is 200
+    and output `.access` equals "admin_panel"
+    and output `.level` equals "superuser"
+
+  it "exposes conditions in $context for jq"
+    when calling GET /test-when-context-jq
+    then status is 200
+    and output `.from_mobile` equals true
+    and output `.dark_mode` equals false
+
+  it "supports getWhen to read back conditions in Lua"
+    when calling GET /test-get-when
+    then status is 200
+    and output `.feature_x` equals true
+    and output `.feature_y` equals false
+
+  it "applies @when tags on individual steps"
+    when calling GET /test-when-on-step
+    then status is 200
+    and output `.base` equals "data"
+    and output `.metadata.timestamp` equals "2024-01-01"
+    and output `.skipped` equals null
+
+  it "applies boolean expressions on individual steps"
+    when calling GET /test-bool-expr-on-step
+    then status is 200
+    and output `.base` equals "data"
+    and output `.both_ab` equals true
+    and output `.all_abc` equals null
+    and output `.a_or_c` equals true
+    and output `.a_and_not_c` equals true
+    and output `.not_a` equals null
+    and output `.grouped` equals true
+
+## Boolean Tag Expressions in Dispatch (v2.4+)
+# Demonstrates the new boolean expression support in dispatch case statements
+# Supports: @when(a) and @when(b), @when(a) or @when(b), parentheses for grouping
+
+# Test AND expression: both conditions must be true
+GET /test-dispatch-and
+  |> lua: `
+    setWhen("authenticated", true)
+    setWhen("admin", true)
+    return request
+  `
+  |> dispatch
+    case @when(authenticated) and @when(admin):
+      |> jq: `{ access: "admin_panel", matched: "and_both" }`
+    default:
+      |> jq: `{ access: "denied", matched: "default" }`
+
+# Test AND expression: one condition false
+GET /test-dispatch-and-partial
+  |> lua: `
+    setWhen("authenticated", true)
+    setWhen("admin", false)
+    return request
+  `
+  |> dispatch
+    case @when(authenticated) and @when(admin):
+      |> jq: `{ access: "admin_panel", matched: "and_both" }`
+    default:
+      |> jq: `{ access: "user_only", matched: "default" }`
+
+# Test OR expression: either condition can be true
+GET /test-dispatch-or
+  |> lua: `
+    setWhen("mobile", true)
+    setWhen("tablet", false)
+    return request
+  `
+  |> dispatch
+    case @when(mobile) or @when(tablet):
+      |> jq: `{ layout: "compact", matched: "mobile_or_tablet" }`
+    default:
+      |> jq: `{ layout: "desktop", matched: "default" }`
+
+# Test mixed tag types in expression: @when and @flag together
+GET /test-dispatch-mixed-tags
+  |> lua: `setWhen("premium_user", true); return request`
+  |> dispatch
+    case @when(premium_user) and @!flag(maintenance):
+      |> jq: `{ access: "premium", matched: "when_and_flag" }`
+    default:
+      |> jq: `{ access: "basic", matched: "default" }`
+
+# Test precedence: AND binds tighter than OR
+# a or b and c = a or (b and c)
+GET /test-dispatch-precedence
+  |> lua: `
+    setWhen("superadmin", true)
+    setWhen("admin", false)
+    setWhen("elevated", false)
+    return request
+  `
+  |> dispatch
+    case @when(superadmin) or @when(admin) and @when(elevated):
+      |> jq: `{ result: "matched", reason: "superadmin OR (admin AND elevated)" }`
+    default:
+      |> jq: `{ result: "no_match" }`
+
+# Test explicit grouping with parentheses
+# (a or b) and c - different from a or (b and c)
+GET /test-dispatch-grouping
+  |> lua: `
+    setWhen("admin", true)
+    setWhen("staff", false)
+    setWhen("on_duty", true)
+    return request
+  `
+  |> dispatch
+    case (@when(admin) or @when(staff)) and @when(on_duty):
+      |> jq: `{ result: "matched", reason: "(admin OR staff) AND on_duty" }`
+    default:
+      |> jq: `{ result: "no_match" }`
+
+# Test negation within boolean expression
+GET /test-dispatch-negated-expr
+  |> lua: `
+    setWhen("authenticated", true)
+    setWhen("banned", false)
+    return request
+  `
+  |> dispatch
+    case @when(authenticated) and @!when(banned):
+      |> jq: `{ status: "welcome", matched: "auth_and_not_banned" }`
+    default:
+      |> jq: `{ status: "blocked" }`
+
+describe "Boolean Tag Expressions"
+  it "matches when both AND conditions are true"
+    when calling GET /test-dispatch-and
+    then status is 200
+    and output `.access` equals "admin_panel"
+    and output `.matched` equals "and_both"
+
+  it "falls through to default when AND has one false condition"
+    when calling GET /test-dispatch-and-partial
+    then status is 200
+    and output `.access` equals "user_only"
+    and output `.matched` equals "default"
+
+  it "matches when any OR condition is true"
+    when calling GET /test-dispatch-or
+    then status is 200
+    and output `.layout` equals "compact"
+    and output `.matched` equals "mobile_or_tablet"
+
+  it "supports mixing @when and @flag in expressions"
+    when calling GET /test-dispatch-mixed-tags
+    then status is 200
+    and output `.access` equals "premium"
+
+  it "applies correct precedence (AND before OR)"
+    when calling GET /test-dispatch-precedence
+    then status is 200
+    and output `.result` equals "matched"
+
+  it "respects explicit grouping with parentheses"
+    when calling GET /test-dispatch-grouping
+    then status is 200
+    and output `.result` equals "matched"
+
+  it "supports negation within boolean expressions"
+    when calling GET /test-dispatch-negated-expr
+    then status is 200
+    and output `.status` equals "welcome"
+# Test file demonstrating new test DSL features
+# Features: Request body, headers, cookies, and header assertions
+
+pipeline testCreateContact =
+  |> jq: `{
+    name: .body.name,
+    email: .body.email,
+    cookie_value: .cookies.session_id,
+    api_key: .headers["x-api-key"]
+  }`
+
+pipeline testAuthenticate =
+  |> jq: `{
+    user: .body.username,
+    setCookies: ["session=" + .body.username + "_token"]
+  }`
+
+pipeline testEcho =
+  |> jq: `.`
+
+POST /test-contacts
+  |> testCreateContact
+
+POST /test-authenticate
+  |> testAuthenticate
+
+POST /test-echo
+  |> testEcho
+
+describe "POST body support"
+  it "creates a contact with POST body"
+    when calling POST /test-contacts
+    with body `{
+      "name": "Alice",
+      "email": "alice@example.com"
+    }`
+    then output `.name` equals `"Alice"`
+    and output `.email` equals `"alice@example.com"`
+
+describe "Headers support"
+  it "sends custom headers"
+    when calling POST /test-contacts
+    with headers `{
+      "x-api-key": "secret123",
+      "content-type": "application/json"
+    }`
+    and with body `{
+      "name": "Bob",
+      "email": "bob@example.com"
+    }`
+    then status is 200
+    and output `.api_key` equals `"secret123"`
+
+describe "Cookies support"
+  it "sends cookies with request"
+    when calling POST /test-contacts
+    with cookies `{
+      "session_id": "abc123"
+    }`
+    and with body `{
+      "name": "Charlie",
+      "email": "charlie@example.com"
+    }`
+    then status is 200
+    and output `.cookie_value` equals `"abc123"`
+
+describe "Header assertions"
+  it "verifies Set-Cookie header"
+    when calling POST /test-authenticate
+    with body `{
+      "username": "alice"
+    }`
+    then status is 200
+    and header "Set-Cookie" contains `session=alice_token`
+
+describe "Combined features"
+  it "uses body, headers, cookies together"
+    when calling POST /test-echo
+    with body `{
+      "name": "Dave",
+      "email": "dave@example.com"
+    }`
+    and with headers `{
+      "x-api-version": "v2"
+    }`
+    and with cookies `{
+      "session_id": "xyz789"
+    }`
+    then status is 200
+    and output `.body.name` equals `"Dave"`
+    and output `.cookies.session_id` equals `"xyz789"`
+    and output `.headers["x-api-version"]` equals `"v2"`
+
+# GraphQL Test Routes
+GET /test-gql-mock-users
+  |> graphql: `query { users(limit: 10) { id name email } }`
+
+GET /test-gql-spy-users
+  |> graphql: `query { users(limit: 10) { id name } }`
+
+GET /test-gql-mock-mutation
+  |> graphql: `mutation { createUser(name: "Test", email: "test@example.com") { id name } }`
+
+GET /test-gql-spy-mutation
+  |> graphql: `mutation { createUser(name: "Alice", email: "alice@example.com") { id } }`
+
+GET /test-gql-multi-query
+  |> graphql: `query { users { id name } posts { id title } }`
+
+GET /test-gql-variables
+  |> jq: `.graphqlParams = { id: 42 }`
+  |> graphql: `query($id: ID!) { user(id: $id) { id name } }`
+
+describe "GraphQL Mocking and Spying"
+  with mock query users returning `[
+    { "id": 1, "name": "Mocked User", "email": "mock@example.com" }
+  ]`
+
+  it "returns mocked query data"
+    when calling GET /test-gql-mock-users
+    then status is 200
+    and output `.data.users[0].name` equals `"Mocked User"`
+    and output `.data.users[0].email` equals `"mock@example.com"`
+
+  it "verifies GraphQL query arguments (spying)"
+    when calling GET /test-gql-spy-users
+    then status is 200
+    and call query users with `{ "limit": 10 }`
+
+  with mock mutation createUser returning `{
+    "id": 99,
+    "name": "New User",
+    "email": "new@example.com"
+  }`
+
+  it "returns mocked mutation data"
+    when calling GET /test-gql-mock-mutation
+    then status is 200
+    and output `.data.createUser.id` equals `99`
+    and output `.data.createUser.name` equals `"New User"`
+
+  it "verifies mutation arguments"
+    when calling GET /test-gql-spy-mutation
+    then status is 200
+    and call mutation createUser with `{ "name": "Alice", "email": "alice@example.com" }`
+
+describe "Advanced GraphQL Testing"
+  with mock query users returning `[{"id": 1, "name": "User 1"}]`
+  and mock query posts returning `[{"id": 10, "title": "Post 1"}]`
+
+  it "mocks multiple queries independently"
+    when calling GET /test-gql-multi-query
+    then status is 200
+    and output `.data.users[0].name` equals `"User 1"`
+    and output `.data.posts[0].title` equals `"Post 1"`
+    and call query users with `{}`
+    and call query posts with `{}`
+
+describe "GraphQL Variables Testing"
+  with mock query user returning `{ "id": 42, "name": "Variable User" }`
+
+  it "works with GraphQL variables"
+    when calling GET /test-gql-variables
+    then status is 200
+    and output `.data.user.name` equals `"Variable User"`
+    and call query user with `{ "id": 42 }`
+
+## Step-Level Guards Demo (@guard tag)
+# Guards allow conditional step execution using JQ expressions
+# Syntax: @guard(`jq_expression`)
+# The step executes only if the JQ expression evaluates to truthy
+
+# Basic guard: Execute only if user is admin
+GET /admin/dashboard
+  |> jq: `{ user: { role: "admin", name: "Alice" } }`
+  |> jq: `. + { message: "Admin dashboard - restricted access" }` @guard(`.user.role == "admin"`)
+  |> jq: `. + { message: "Access denied" }` @guard(`.user.role != "admin"`)
+
+# Negated guard: Skip for production
+GET /debug/info
+  |> jq: `{ env: "development", debug: true }`
+  |> log: `level: debug` @!guard(`.env == "production"`)
+  |> jq: `{ debugInfo: "Verbose logging enabled" }` @guard(`.debug == true`)
+
+# Guard with complex conditions
+GET /premium/features
+  |> jq: `{
+    user: {
+      premium: true,
+      verified: true,
+      credits: 100
+    }
+  }`
+  |> jq: `. + { premiumData: "loaded" }` @guard(`.user.premium and .user.verified`)
+  |> jq: `. + { bonus: "10 credits" }` @guard(`.user.credits > 50`)
+  |> jq: `. + { message: "Premium features loaded" }`
+
+# Guard checking array length
+GET /process/items
+  |> jq: `{ items: [1, 2, 3, 4, 5], minItems: 3 }`
+  |> jq: `{ processed: .items | map(. * 2) }` @guard(`(.items | length) >= 3`)
+  |> jq: `{ result: .processed, count: (.processed | length) }`
+
+# Guard checking nested properties
+GET /api/user/preferences
+  |> jq: `{
+    user: {
+      settings: {
+        notifications: {
+          email: true,
+          push: false
+        }
+      }
+    }
+  }`
+  |> jq: `. + { sendEmail: true }` @guard(`.user.settings.notifications.email == true`)
+  |> jq: `. + { sendPush: true }` @guard(`.user.settings.notifications.push == true`)
+  |> jq: `. + { status: "Preferences loaded" }`
+
+# Guard with null/missing field checks
+GET /api/optional/feature
+  |> jq: `{ feature: null, fallback: "default" }`
+  |> jq: `{ source: "feature" }` @guard(`.feature != null`)
+  |> jq: `{ source: "fallback" }` @guard(`.feature == null`)
+
+# Multiple guards in a pipeline
+pipeline conditionalProcessing =
+  |> jq: `{ stage: 1 }` @guard(`.enabled != false`)
+  |> jq: `. + { stage: 2 }` @guard(`.stage == 1`)
+  |> jq: `. + { stage: 3 }` @guard(`.stage == 2`)
+  |> jq: `. + { complete: true }`
+
+GET /test/conditional-pipeline
+  |> jq: `{ enabled: true }`
+  |> conditionalProcessing
+
+# Guard with role-based access
+GET /content/:id
+  |> jq: `{
+    user: { role: "editor", id: 1 },
+    content: { id: .params.id, draft: true }
+  }`
+  |> jq: `. + { source: "drafts" }` @guard(`.user.role == "editor" or .user.role == "admin"`)
+  |> jq: `. + { source: "published" }` @guard(`.user.role == "reader"`)
+  |> jq: `. + { message: "Content loaded from " + .source }`
+
+# Guard with feature flags
+GET /feature/new-ui
+  |> jq: `{ flags: { newUI: true, beta: true }, user: "test" }`
+  |> jq: `{ ui: "new", version: "2.0" }` @guard(`.flags.newUI == true`)
+  |> jq: `{ ui: "legacy", version: "1.0" }` @guard(`.flags.newUI != true`)
+  |> jq: `{ betaFeatures: ["feature1", "feature2"] }` @guard(`.flags.beta == true`)
+
+# Guard combined with other tags
+GET /advanced/route
+  |> jq: `{ env: "production", admin: true, cache: true }`
+  |> jq: `. + { cacheEnabled: true }` @guard(`.cache == true`)
+  |> jq: `. + { adminAccess: true }` @guard(`.admin == true`)
+  |> jq: `. + { message: "Advanced route with multiple guards" }`
+
+# Guard with dispatch
+GET /dispatch/conditional
+  |> jq: `{ tier: "premium", verified: true }`
+  |> dispatch
+    case @guard(`.tier == "premium"`):
+      |> jq: `{ message: "Premium tier", features: ["all"] }`
+    case @guard(`.tier == "standard"`):
+      |> jq: `{ message: "Standard tier", features: ["basic"] }`
+    default:
+      |> jq: `{ message: "Free tier", features: [] }`
+
+# Test guards with mocks
+describe "Guard Feature Tests"
+  it "executes step when guard condition is true"
+    when calling GET /admin/dashboard
+    then status is 200
+    and output `.message` equals `"Admin dashboard - restricted access"`
+
+  it "skips step when guard condition is false"
+    when calling GET /debug/info
+    then status is 200
+
+  it "handles complex guard expressions"
+    when calling GET /premium/features
+    then status is 200
+    and output `.message` equals `"Premium features loaded"`
+
+  it "checks array lengths in guards"
+    when calling GET /process/items
+    then status is 200
+    and output `.count` equals 5
+
+  it "handles nested property guards"
+    when calling GET /api/user/preferences
+    then status is 200
+    and output `.status` equals `"Preferences loaded"`
+
+  it "handles null checks in guards"
+    when calling GET /api/optional/feature
+    then status is 200
+    and output `.source` equals `"fallback"`
+
+# Real-world example: Data pipeline with conditional steps
+GET /pipeline/etl/:dataset
+  |> jq: `{
+    dataset: .params.dataset,
+    config: {
+      validate: true,
+      transform: true,
+      cache: true,
+      notify: false
+    },
+    rawData: [
+      {id: 1, value: 10},
+      {id: 2, value: 20},
+      {id: 3, value: null},
+      {id: 4, value: 40}
+    ]
+  }`
+  |> jq: `. + { validationErrors: (.rawData | map(select(.value == null)) | length) }` @guard(`.config.validate == true`)
+  |> jq: `. + { transformed: .rawData | map({id: .id, value: ((.value // 0) * 2)}) }` @guard(`.config.transform == true and (.validationErrors // 0) < 2`)
+  |> jq: `. + { cached: true }` @guard(`.config.cache == true`)
+  |> jq: `. + { notificationSent: true }` @guard(`.config.notify == true`)
+  |> jq: `{
+    dataset: .dataset,
+    recordCount: (.transformed // .rawData) | length,
+    validationErrors: .validationErrors,
+    status: "complete"
+  }`
+
+# Guard with rate limiting context
+GET /api/limited/:resource
+  |> jq: `{
+    resource: .params.resource,
+    user: { tier: "free", requestsRemaining: 5 }
+  }`
+  |> jq: `. + { allowed: true, data: "mock data" }` @guard(`.user.requestsRemaining > 0`)
+  |> jq: `. + { error: "Rate limit exceeded" }` @guard(`.user.requestsRemaining <= 0`)
+  |> jq: `{
+    resource: .resource,
+    data: .data,
+    error: .error,
+    requestsRemaining: .user.requestsRemaining
+  }`
+
+# DOM Scraping Tests
+
+pipeline htmlPage =
+  |> handlebars: `
+    <!DOCTYPE html>
+    <html>
+      <body>
+        <h1 class="title">Welcome Home</h1>
+        <div class="user-profile">Logged in as <b>Admin</b></div>
+        <ul class="items">
+          <li>Item 1</li>
+          <li>Item 2</li>
+          <li>Item 3</li>
+        </ul>
+        <a id="login" href="/login">Sign In</a>
+      </body>
+    </html>
+  `
+
+GET /dom-test
+  |> htmlPage
+
+describe "DOM Scraping"
+  it "verifies elements"
+    when calling GET /dom-test
+    then status is 200
+    and selector `h1.title` exists
+    and selector `#non-existent` does not exist
+    and selector `h1.title` text equals "Welcome Home"
+    and selector `.user-profile` text contains "Logged in as"
+    and selector `ul.items > li` count equals 3
+    and selector `ul.items > li` count is greater than 0
+    and selector `a#login` attribute `href` equals "/login"
+    and selector `a#login` attribute `href` contains "/login"
+    and selector `a#login[href="/login"]` exists
+    and selector `ul.items > li:nth-child(2)` text equals "Item 2"
+
+pipeline teamTemplate =
+  |> assert: `{ team: { name: string, description: string } }`
+  |> handlebars: `
+    <div class="team">
+      <h1>{{team.name}}</h1>
+      <p>{{team.description}}</p>
+    </div>
+  `
+
+describe "Pipeline scraping"
+  it "scrapes the pipeline"
+    let teamNumber = 4
+    when executing pipeline teamTemplate
+    with input `{ team: { name: ("Team " + (.teamNumber | tostring)), description: ("Team " + (.teamNumber | tostring) + " description") } }`
+    then selector `.team` exists
+    and selector `.team h1` text equals "Team {{teamNumber}}"
+    and selector `.team p` text equals "Team {{teamNumber}} description"
+
+# ===================================================================
+# Let Variables with Handlebars Templating Tests
+# ===================================================================
+
+GET /users/:id
+  |> jq: `{ "id": .params.id | tonumber, "name": ("User " + (.params.id | tostring)), "active": true }`
+
+POST /teams
+  |> jq: `{ "id": 101, "name": .body.name, "members": .body.members, "active": .body.active }`
+
+describe "Let Variables - Basic Usage"
+  it "uses let variables in route path"
+    let userId = 42
+    when calling GET /users/{{userId}}
+    then status is 200
+    and output `.id` equals {{userId}}
+    and output `.name` equals "User {{userId}}"
+
+  it "uses let variables with different types"
+    let stringVar = "test"
+    let numberVar = 123
+    let boolVar = true
+    when calling GET /users/{{numberVar}}
+    then status is 200
+    and output `.id` equals {{numberVar}}
+    and output `.active` equals {{boolVar}}
+
+  it "uses let variables in request body"
+    let teamName = "Alpha Squad"
+    let memberCount = 5
+    let isActive = true
+    when calling POST /teams
+    with body `{
+      name: .teamName,
+      members: .memberCount,
+      active: .isActive
+    }`
+    then status is 200
+    and output `.name` equals "{{teamName}}"
+    and output `.members` equals {{memberCount}}
+    and output `.active` equals {{isActive}}
+
+describe "Let Variables - Complex Scenarios"
+  it "interleaves let bindings with with clauses"
+    let userId = 99
+    let userName = "Alice"
+    let userActive = true
+    when calling POST /teams
+    with body `{
+      name: ("Team for " + .userName),
+      members: .userId,
+      active: .userActive
+    }`
+    then status is 200
+    and output `.name` equals "Team for {{userName}}"
+    and output `.members` equals {{userId}}
+
+  it "uses backtick strings in let values"
+    let jsonData = `{"key": "value", "count": 10}`
+    let teamId = 101
+    when calling POST /teams
+    with body `{
+      name: "Data Team",
+      members: .teamId,
+      active: true
+    }`
+    then status is 200
+    and output `.id` equals {{teamId}}
+
+  it "uses quoted strings in let values"
+    let description = "Engineering Team"
+    let teamId = 201
+    when calling POST /teams
+    with body `{
+      name: .description,
+      members: .teamId,
+      active: true
+    }`
+    then status is 200
+    and output `.name` equals "{{description}}"
+
+describe "Let Variables - Pipeline Execution"
+  it "uses let variables with pipeline execution"
+    let teamName = "DevOps Squad"
+    let teamCount = 8
+
+    when executing pipeline teamTemplate
+    with input `{
+      team: {
+        name: .teamName,
+        description: ("Team with " + (.teamCount | tostring) + " members")
+      }
+    }`
+    then selector `.team h1` text equals "{{teamName}}"
+    and selector `.team p` text contains "{{teamCount}}"
+
+  it "uses multiple let variables in assertions"
+    let name = "Special Team"
+    let count = 15
+
+    when calling POST /teams
+    with body `{
+      name: .name,
+      members: .count,
+      active: true
+    }`
+    then status is 200
+    and output `.id` equals 101
+    and output `.name` equals "{{name}}"
+    and output `.members` equals {{count}}
+
+# ===================================================================
+# JQ Input Syntax Tests - Showcasing New Features
+# ===================================================================
+
+describe "JQ Inputs - Mock Returning Values"
+  it "uses JQ in mock returning with let variables"
+    let userId = 42
+    let userName = "Alice"
+    let userActive = true
+
+    when executing pipeline getTeams
+    with input `{ params: { id: .userId } }`
+    and mock pg returning `{
+      rows: [{
+        id: .userId,
+        name: .userName,
+        active: .userActive,
+        created_at: "2024-01-01"
+      }]
+    }`
+    then output `.rows[0].id` equals {{userId}}
+    and output `.rows[0].name` equals "{{userName}}"
+    and output `.rows[0].active` equals {{userActive}}
+
+  it "uses JQ string concatenation in mocks"
+    let teamPrefix = "Engineering"
+    let teamNumber = 5
+
+    when executing variable pg teamsQuery
+    with input `{ sqlParams: [] }`
+    and mock pg.teamsQuery returning `{
+      rows: [{
+        id: .teamNumber,
+        name: (.teamPrefix + " Team " + (.teamNumber | tostring)),
+        description: ("Team #" + (.teamNumber | tostring))
+      }]
+    }`
+    then output `.rows[0].name` equals "{{teamPrefix}} Team {{teamNumber}}"
+
+  it "uses JQ conditionals in mock data"
+    let score = 85
+    let isPremium = true
+
+    when executing pipeline getTeams
+    with input `{ params: { id: 1 } }`
+    and mock pg returning `{
+      rows: [{
+        score: .score,
+        tier: (if .score > 80 then "gold" else "silver" end),
+        access: (if .isPremium then "full" else "limited" end)
+      }]
+    }`
+    then output `.rows[0].tier` equals "gold"
+    and output `.rows[0].access` equals "full"
+
+describe "JQ Inputs - Body with Complex Expressions"
+  it "builds nested objects with JQ"
+    let firstName = "John"
+    let lastName = "Doe"
+    let age = 30
+    let city = "NYC"
+
+    when calling POST /teams
+    with body `{
+      user: {
+        fullName: (.firstName + " " + .lastName),
+        age: .age,
+        location: {
+          city: .city,
+          country: "USA"
+        }
+      },
+      metadata: {
+        createdBy: .firstName,
+        timestamp: "2024-01-01"
+      }
+    }`
+    then status is 200
+
+  it "uses JQ array construction"
+    let tag1 = "backend"
+    let tag2 = "api"
+    let priority = 3
+
+    when calling POST /teams
+    with body `{
+      name: "Development Team",
+      tags: [$tag1, $tag2, "webpipe"],
+      priorities: [$priority, ($priority + 1), ($priority + 2)],
+      active: true
+    }`
+    then status is 200
+
+  it "uses JQ map and filter operations"
+    let multiplier = 10
+    let threshold = 50
+
+    when calling POST /teams
+    with body `{
+      name: "Data Team",
+      scores: ([1, 2, 3, 4, 5] | map(. * $multiplier)),
+      filtered: ([30, 60, 40, 70] | map(select(. > $threshold))),
+      total: ([10, 20, 30] | add)
+    }`
+    then status is 200
+
+describe "JQ Inputs - Headers and Cookies"
+  it "uses JQ in headers"
+    let apiKey = "secret123"
+    let userId = 42
+    let requestId = "req-001"
+
+    when calling POST /teams
+    with headers `{
+      "x-api-key": $apiKey,
+      "x-user-id": $userId | tostring,
+      "x-request-id": $requestId + "-" + ($userId | tostring),
+      "content-type": "application/json"
+    }`
+    and with body `{
+      name: "Test Team",
+      active: true
+    }`
+    then status is 200
+
+  it "uses JQ in cookies"
+    let sessionId = "sess-abc-123"
+    let userId = 999
+    let theme = "dark"
+
+    when calling POST /teams
+    with cookies `{
+      session: $sessionId,
+      user: ("user-" + ($userId | tostring)),
+      preferences: $theme + "-mode"
+    }`
+    and with body `{
+      name: "Cookie Team",
+      active: true
+    }`
+    then status is 200
+
+  it "combines headers, cookies, and body with JQ"
+    let apiToken = "token-xyz"
+    let userId = 777
+    let teamName = "Full Stack"
+
+    when calling POST /teams
+    with headers `{
+      authorization: ("Bearer " + .apiToken),
+      "x-user-id": (.userId | tostring)
+    }`
+    and with cookies `{
+      session: ("session-" + (.userId | tostring))
+    }`
+    and with body `{
+      name: (.teamName + " Team"),
+      owner: .userId,
+      active: true
+    }`
+    then status is 200
+
+describe "JQ Inputs - Pipeline Execution with Complex Data"
+  it "uses JQ to build complex nested input"
+    let projectName = "Web Pipe"
+    let version = 2
+    let features = 10
+
+    when executing pipeline teamTemplate
+    with input `{
+      team: {
+        name: (.projectName + " v" + (.version | tostring)),
+        stats: {
+          features: .features,
+          completion: ((.features * 10) | tostring) + "%"
+        },
+        tags: [.projectName, ("v" + (.version | tostring)), "production"],
+        description: ("Project " + .projectName + " v" + (.version | tostring))
+      }
+    }`
+    then selector `.team` exists
+
+  it "uses JQ with null coalescing and defaults"
+    let maybeName = null
+    let maybeCount = 5
+
+    when executing pipeline teamTemplate
+    with input `{
+      team: {
+        name: (.maybeName // "Default Team"),
+        count: (.maybeCount // 0),
+        description: ((.maybeName // "Unknown") + " Team")
+      }
+    }`
+    then selector `.team h1` text equals "Default Team"
+
+describe "JQ Inputs - Advanced Patterns"
+  it "uses JQ with type conversions"
+    let numString = "42"
+    let numValue = 100
+    let boolString = "true"
+
+    when calling POST /teams
+    with body `{
+      id: (.numString | tonumber),
+      score: .numValue,
+      name: (.numValue | tostring),
+      active: true
+    }`
+    then status is 200
+
+  it "uses JQ with object manipulation"
+    let baseData = `{"key": "value"}`
+    let additionalField = "extra"
+    let count = 5
+
+    when calling POST /teams
+    with body `{
+      name: "Object Team",
+      data: {
+        field: .additionalField,
+        count: .count,
+        computed: (.count * 2)
+      },
+      active: true
+    }`
+    then status is 200
+
+  it "uses JQ with alternative operators"
+    let primaryName = null
+    let fallbackName = "Backup Team"
+    let optionalCount = null
+
+    when calling POST /teams
+    with body `{
+      name: (.primaryName // .fallbackName),
+      members: (.optionalCount // 10),
+      active: true
+    }`
+    then status is 200
+    and output `.name` equals "{{fallbackName}}"
+    and output `.members` equals 10
+
+describe "JQ Inputs - Real World Scenarios"
+  it "creates a complete user profile with JQ"
+    let email = "john@example.com"
+    let firstName = "John"
+    let lastName = "Doe"
+    let age = 28
+    let role = "developer"
+    let yearsExp = 5
+
+    when calling POST /teams
+    with body `{
+      profile: {
+        email: .email,
+        name: {
+          first: .firstName,
+          last: .lastName,
+          full: (.firstName + " " + .lastName)
+        },
+        details: {
+          age: .age,
+          role: .role,
+          level: (if .yearsExp > 3 then "senior" else "junior" end),
+          experience: (.yearsExp | tostring) + " years"
+        }
+      },
+      metadata: {
+        createdBy: .email,
+        roleType: .role
+      }
+    }`
+    then status is 200
+
+  it "builds API request with dynamic configuration"
+    let environment = "production"
+    let debug = false
+    let timeout = 30
+    let retries = 3
+
+    when calling POST /teams
+    with headers `{
+      "x-environment": .environment,
+      "x-debug": (.debug | tostring),
+      "x-timeout": (.timeout | tostring)
+    }`
+    and with body `{
+      config: {
+        env: .environment,
+        debug: .debug,
+        timeout: .timeout,
+        retries: .retries,
+        maxRetries: (.retries * 2),
+        endpoint: ("https://api." + .environment + ".example.com")
+      }
+    }`
+    then status is 200
+
+  it "generates test data with calculations"
+    let basePrice = 100
+    let taxRate = 0.15
+    let quantity = 3
+    let discount = 10
+
+    when calling POST /teams
+    with body `{
+      order: {
+        items: .quantity,
+        unitPrice: .basePrice,
+        subtotal: (.basePrice * .quantity),
+        discount: .discount,
+        discountedTotal: ((.basePrice * .quantity) - .discount),
+        tax: (((.basePrice * .quantity) - .discount) * .taxRate),
+        total: ((((.basePrice * .quantity) - .discount) * (1 + .taxRate)) | floor)
+      }
+    }`
+    then status is 200
+
+# ============================================================================
+# Spec 001: Test DSL Enhancements - Describe-Level let Bindings & JQ Support
+# ============================================================================
+
+describe "Describe-Level Variables"
+  # Describe-level variables are shared across all tests
+  let defaultRole = "user"
+  let activeStatus = true
+  let testUserId = 42
+
+  it "uses describe-level variables in test body"
+    when calling POST /teams
+    with body `{
+      "userId": .testUserId,
+      "role": .defaultRole,
+      "active": .activeStatus
+    }`
+    then status is 200
+
+  it "overrides describe-level variables with test-level variables"
+    let defaultRole = "admin"
+
+    when calling POST /teams
+    with body `{
+      "userId": .testUserId,
+      "role": .defaultRole,
+      "active": .activeStatus
+    }`
+    then status is 200
+
+# ============================================================================
+# Spec 001: GraphQL Mocking with Describe-Level Variables
+# ============================================================================
+
+describe "GraphQL Mocking with Describe-Level Variables"
+  # Describe-level variables for consistent test data
+  let mockUserId = 99999
+  let mockUserName = "Test User"
+  let mockUserEmail = "test@example.com"
+  let expectedLimit = 10
+  let expectedOffset = 0
+
+  # Mock GraphQL query using JQ to reference describe-level variables
+  with mock query users returning `[
+    {
+      "id": .mockUserId,
+      "name": .mockUserName,
+      "email": .mockUserEmail
+    }
+  ]`
+
+  # Mock GraphQL mutation using JQ to reference describe-level variables
+  with mock mutation createUser returning `{
+    "id": .mockUserId,
+    "name": .mockUserName,
+    "email": .mockUserEmail
+  }`
+
+  it "returns mocked query data with describe-level variables"
+    when calling GET /test-gql-mock-users
+    then status is 200
+    and output `.data.users[0].id` equals {{mockUserId}}
+    and output `.data.users[0].name` equals "{{mockUserName}}"
+    and output `.data.users[0].email` equals "{{mockUserEmail}}"
+
+  it "verifies GraphQL query arguments with JQ in call assertions"
+    when calling GET /test-gql-spy-users
+    then status is 200
+    # Call assertions now use JQ instead of Handlebars
+    and call query users with `{
+      "limit": .expectedLimit,
+      "offset": .expectedOffset
+    }`
+
+  it "returns mocked mutation data with describe-level variables"
+    when calling GET /test-gql-mock-mutation
+    then status is 200
+    and output `.data.createUser.id` equals {{mockUserId}}
+    and output `.data.createUser.name` equals "{{mockUserName}}"
+
+  it "verifies mutation arguments with JQ in call assertions"
+    let testName = "Alice"
+    let testEmail = "alice@example.com"
+
+    when calling GET /test-gql-spy-mutation
+    then status is 200
+    # Call assertions use JQ to reference both describe and test-level variables
+    and call mutation createUser with `{
+      "name": .testName,
+      "email": .testEmail
+    }`
+
+# ============================================================================
+# Spec: Inline Argument Evaluation - Real-World Examples
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 1. Fetch Middleware - JSONPlaceholder Examples
+# ----------------------------------------------------------------------------
+
+# Simple GET with dynamic URL construction
+GET /users-fetch/:id/:field |> fetch("https://jsonplaceholder.typicode.com/users/" + (.params.id | tostring)) |> jq: `{ user: .data.response[.params.field] }`
+
+# POST with dynamic body and options
+POST /posts
+  |> jq: `{
+    title: .body.title,
+    body: .body.content,
+    userId: 1
+  }`
+  # New syntax: Inline URL and Options object
+  |> fetch(
+    "https://jsonplaceholder.typicode.com/posts",
+    {
+      method: "POST",
+      headers: {
+        "Content-type": "application/json; charset=UTF-8"
+      },
+      body: {
+        title: .title,
+        body: .body,
+        userId: .userId
+      }
+    }
+  )
+  |> jq: `{ newPost: .data.response }`
+
+# ----------------------------------------------------------------------------
+# 2. Postgres Middleware - User Database Examples
+# ----------------------------------------------------------------------------
+
+# Select with inline parameter array
+GET /db/users/:id
+  |> jq: `{ id: (.params.id | tonumber) }`
+  # New syntax: Inline parameters array [param1, param2]
+  |> pg([.id]): `
+    SELECT *
+    FROM users
+    WHERE id = $1
+  ` @result(foundUser)
+  |> jq: `.data.foundUser.rows[0]`
+
+# ----------------------------------------------------------------------------
+# 3. GraphQL Middleware - Internal Schema Examples
+# ----------------------------------------------------------------------------
+
+# Endpoint using inline variables
+GET /gql/user/:id/todos
+  |> jq: `{ targetId: (.params.id | tonumber) }`
+  # New syntax: Inline variables object { var: value }
+  |> graphql({ userId: .targetId }): `
+    query($userId: ID!) {
+      user(id: $userId) { name email }
+      posts(limit: 10) { id title body }
+    }
+  `
+  |> jq: `.`
+
+# ==============================================================================
+# @result Tag Specification Examples
+# Comprehensive demonstrations of the @result(name) tag feature
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Named Accumulation - Using @result
+# ------------------------------------------------------------------------------
+
+GET /result/user-with-dept
+  # Use @result to name each middleware output at the step that produces it
+  |> jq: `{ sqlParams: [1] }`
+  |> pg: `SELECT 1 as id, 'Alice' as name, 'alice@example.com' as email, 5 as dept_id` @result(user)
+
+  # Set params for the next query
+  |> jq: `. + { sqlParams: [.data.user.rows[0].dept_id] }`
+  |> pg: `SELECT 5 as id, 'Engineering' as name` @result(department)
+
+  # Final aggregation - both .data.user and .data.department are available
+  |> jq: `{
+      userName: .data.user.rows[0].name,
+      userEmail: .data.user.rows[0].email,
+      deptName: .data.department.rows[0].name
+    }`
+
+# ------------------------------------------------------------------------------
+# 2. Modern Syntax - Using @result Tag (Recommended!)
+# ------------------------------------------------------------------------------
+
+GET /modern/user-with-dept
+  # New style: Use @result tag - cleaner, more declarative
+  |> jq: `{ sqlParams: [1] }`
+  |> pg: `SELECT 1 as id, 'Bob' as name, 'bob@example.com' as email, 3 as dept_id` @result(user)
+
+  # Access data immediately, set params for next query
+  |> jq: `{ sqlParams: [.data.user.rows[0].dept_id] }`
+  |> pg: `SELECT 3 as id, 'Product' as name` @result(department)
+
+  # Both results accumulated under .data
+  |> jq: `{
+      userName: .data.user.rows[0].name,
+      userEmail: .data.user.rows[0].email,
+      deptName: .data.department.rows[0].name
+    }`
+
+# ------------------------------------------------------------------------------
+# 3. Multiple Dataset Accumulation
+# ------------------------------------------------------------------------------
+
+GET /dashboard/summary
+  # Fetch multiple datasets in parallel-style (sequential execution, accumulated results)
+  |> pg: `SELECT 1 as id, 'Engineering' as name UNION SELECT 2 as id, 'Product' as name` @result(departments)
+  |> pg: `SELECT 1 as id, 'Alice' as name UNION SELECT 2 as id, 'Bob' as name UNION SELECT 3 as id, 'Carol' as name` @result(employees)
+  |> pg: `SELECT 1 as id, 'Q1 2024' as name, 'active' as status UNION SELECT 2 as id, 'Q2 2024' as name, 'planning' as status` @result(projects)
+
+  # All three datasets available for final aggregation
+  |> jq: `{
+      totalDepartments: (.data.departments.rowCount),
+      totalEmployees: (.data.employees.rowCount),
+      totalProjects: (.data.projects.rowCount),
+      departmentNames: [.data.departments.rows[].name],
+      employeeNames: [.data.employees.rows[].name],
+      activeProjects: [.data.projects.rows[] | select(.status == "active") | .name]
+    }`
+
+# ------------------------------------------------------------------------------
+# 4. Mixing Auto-Naming and @result
+# ------------------------------------------------------------------------------
+
+GET /mixed/user-profile
+  # Named fetch result
+  |> fetch: `https://jsonplaceholder.typicode.com/users/1` @result(basicInfo)
+
+  # Another named fetch result
+  |> fetch: `https://jsonplaceholder.typicode.com/users/1/todos?_limit=3` @result(recentTodos)
+
+  # Both named results are accumulated
+  |> jq: `{
+      userName: .data.basicInfo.response.name,
+      userEmail: .data.basicInfo.response.email,
+      userCity: .data.basicInfo.response.address.city,
+      todoCount: (.data.recentTodos.response | length),
+      firstTodo: .data.recentTodos.response[0].title
+    }`
+
+# ------------------------------------------------------------------------------
+# 5. Variable Auto-Naming with @result Override
+# ------------------------------------------------------------------------------
+
+# Define variables for auto-naming
+pg getActiveUsers = `SELECT 1 as id, 'Alice' as name, 'active' as status UNION SELECT 2 as id, 'Bob' as name, 'active' as status`
+pg getAllDepartments = `SELECT 1 as id, 'Engineering' as name UNION SELECT 2 as id, 'Product' as name`
+
+GET /auto-naming/demo
+  # Standard auto-naming: result goes to .data.getActiveUsers
+  |> pg: getActiveUsers
+
+  # Override auto-naming: @result tag takes precedence
+  |> pg: getAllDepartments @result(departments)
+
+  # Results available at different paths based on naming
+  |> jq: `{
+      users: .data.getActiveUsers.rows,
+      depts: .data.departments.rows,
+      userCount: .data.getActiveUsers.rowCount,
+      deptCount: .data.departments.rowCount
+    }`
+
+# ------------------------------------------------------------------------------
+# 6. Complex Combinations - @result with Other Tags
+# ------------------------------------------------------------------------------
+
+GET /complex/conditional-fetch
+  # Conditional execution with @when tag
+  |> lua: `
+    setWhen("isAdmin", true)
+    setWhen("isPremium", false)
+    return request
+  `
+
+  # Fetch basic data (always)
+  |> fetch("https://jsonplaceholder.typicode.com/users/1") @result(profile)
+
+  # Fetch admin data only when isAdmin is true
+  |> fetch("https://jsonplaceholder.typicode.com/users/1/posts?_limit=5") @result(adminPosts) @when(isAdmin)
+
+  # Fetch premium features only when isPremium is true (will be skipped in this case)
+  |> fetch("https://jsonplaceholder.typicode.com/users/1/albums") @result(premiumAlbums) @when(isPremium)
+
+  |> jq: `{
+      userName: .data.profile.response.name,
+      hasAdminPosts: (.data.adminPosts != null),
+      hasPremiumAlbums: (.data.premiumAlbums != null),
+      postCount: (if .data.adminPosts then (.data.adminPosts.response | length) else 0 end)
+    }`
+
+# ------------------------------------------------------------------------------
+# 7. Fetch Examples - External API Integration
+# ------------------------------------------------------------------------------
+
+GET /api/user-todos/:userId
+  |> jq: `{ userId: .params.userId }`
+
+  # Fetch user info
+  |> fetch("https://jsonplaceholder.typicode.com/users/" + (.userId | tostring)) @result(user)
+
+  # Fetch user's todos
+  |> fetch("https://jsonplaceholder.typicode.com/users/" + (.userId | tostring) + "/todos") @result(todos)
+
+  # Fetch user's posts
+  |> fetch("https://jsonplaceholder.typicode.com/users/" + (.userId | tostring) + "/posts?_limit=3") @result(posts)
+
+  |> jq: `{
+      profile: {
+        name: .data.user.response.name,
+        email: .data.user.response.email,
+        company: .data.user.response.company.name
+      },
+      stats: {
+        totalTodos: (.data.todos.response | length),
+        completedTodos: ([.data.todos.response[] | select(.completed)] | length),
+        recentPostCount: (.data.posts.response | length)
+      },
+      recentPosts: [.data.posts.response[] | {
+        title: .title,
+        preview: (.body | .[0:50] + "...")
+      }]
+    }`
+
+# ------------------------------------------------------------------------------
+# 8. Database Queries - Relational Data Fetching
+# ------------------------------------------------------------------------------
+
+GET /reports/user-activity/:userId
+  |> jq: `{ userId: (.params.userId | tonumber) }`
+
+  # Get user details
+  |> pg([.userId]): `
+    SELECT
+      1 as id,
+      'Charlie' as name,
+      'charlie@example.com' as email,
+      'active' as status,
+      '2024-01-15'::date as created_at
+  ` @result(user)
+
+  # Get user's department
+  |> pg([.userId]): `
+    SELECT
+      5 as dept_id,
+      'Engineering' as dept_name,
+      'Tech' as division
+  ` @result(department)
+
+  # Get user's recent activities (mock data)
+  |> pg([.userId]): `
+    SELECT
+      1 as id,
+      'Completed project milestone' as activity,
+      '2024-01-20'::date as date
+    UNION
+    SELECT
+      2 as id,
+      'Code review completed' as activity,
+      '2024-01-21'::date as date
+    UNION
+    SELECT
+      3 as id,
+      'Meeting attended' as activity,
+      '2024-01-22'::date as date
+  ` @result(activities)
+
+  |> jq: `{
+      user: {
+        id: .data.user.rows[0].id,
+        name: .data.user.rows[0].name,
+        email: .data.user.rows[0].email,
+        status: .data.user.rows[0].status,
+        memberSince: .data.user.rows[0].created_at
+      },
+      department: {
+        name: .data.department.rows[0].dept_name,
+        division: .data.department.rows[0].division
+      },
+      recentActivity: [.data.activities.rows[] | {
+        activity: .activity,
+        date: .date
+      }],
+      activityCount: .data.activities.rowCount
+    }`
+
+# ------------------------------------------------------------------------------
+# 9. Error Handling - Graceful Degradation
+# ------------------------------------------------------------------------------
+
+GET /resilient/user-data/:userId
+  |> jq: `{ userId: .params.userId }`
+
+  # Primary data source (will succeed)
+  |> fetch("https://jsonplaceholder.typicode.com/users/" + (.userId | tostring)) @result(primary)
+
+  # Secondary data source (might fail, but won't break the pipeline)
+  # Note: In real scenarios, you'd handle errors with @guard or error handling middleware
+  |> jq: `. + { fallbackData: "available" }`
+
+  |> jq: `{
+      hasUserData: (.data.primary.response.name != null),
+      userName: (.data.primary.response.name // "Unknown"),
+      userEmail: (.data.primary.response.email // "N/A"),
+      dataSource: (if .data.primary then "primary" else "fallback" end)
+    }`
+
+# ------------------------------------------------------------------------------
+# 10. Precedence Demonstration - @result > Auto-naming
+# ------------------------------------------------------------------------------
+
+# Define a variable for auto-naming
+pg getUserInfo = `SELECT 1 as id, 'Test User' as name`
+
+GET /precedence/test
+  # Test 1: Auto-naming (variable name becomes result key)
+  |> pg: getUserInfo
+  # Result: .data.getUserInfo
+
+  # Test 2: @result tag overrides auto-naming
+  |> pg: getUserInfo @result(tagWins)
+  # Result: .data.tagWins
+
+  |> jq: `{
+      hasAutoNamed: (.data.getUserInfo != null),
+      hasTagged: (.data.tagWins != null),
+      message: "Tag precedence: @result > auto-naming"
+    }`
+
+# ------------------------------------------------------------------------------
+# 11. Real-World Example - E-commerce Order Details
+# ------------------------------------------------------------------------------
+
+GET /orders/:orderId/details
+  |> jq: `{ orderId: (.params.orderId | tonumber) }`
+
+  # Get order information
+  |> pg([.orderId]): `
+    SELECT
+      1 as id,
+      'ORD-2024-001' as order_number,
+      'pending' as status,
+      299.99 as total,
+      '2024-01-20'::timestamp as created_at
+  ` @result(order)
+
+  # Get order items
+  |> pg([.orderId]): `
+    SELECT
+      1 as id,
+      'Laptop' as product_name,
+      1 as quantity,
+      899.99 as price
+    UNION
+    SELECT
+      2 as id,
+      'Mouse' as product_name,
+      2 as quantity,
+      29.99 as price
+  ` @result(items)
+
+  # Get customer info for this order
+  |> pg([.orderId]): `
+    SELECT
+      42 as customer_id,
+      'Dana Smith' as name,
+      'dana@example.com' as email,
+      '555-0123' as phone
+  ` @result(customer)
+
+  # Get shipping address
+  |> pg([.orderId]): `
+    SELECT
+      '123 Main St' as street,
+      'Springfield' as city,
+      'IL' as state,
+      '62701' as zip
+  ` @result(shipping)
+
+  # Build comprehensive order details
+  |> jq: `{
+      order: {
+        id: .data.order.rows[0].id,
+        orderNumber: .data.order.rows[0].order_number,
+        status: .data.order.rows[0].status,
+        total: .data.order.rows[0].total,
+        createdAt: .data.order.rows[0].created_at
+      },
+      customer: {
+        id: .data.customer.rows[0].customer_id,
+        name: .data.customer.rows[0].name,
+        email: .data.customer.rows[0].email,
+        phone: .data.customer.rows[0].phone
+      },
+      items: [.data.items.rows[] | {
+        product: .product_name,
+        quantity: .quantity,
+        price: .price,
+        subtotal: (.quantity * .price)
+      }],
+      shipping: {
+        address: "\(.data.shipping.rows[0].street), \(.data.shipping.rows[0].city), \(.data.shipping.rows[0].state) \(.data.shipping.rows[0].zip)"
+      },
+      summary: {
+        itemCount: .data.items.rowCount,
+        totalAmount: .data.order.rows[0].total
+      }
+    }`
+
+# ============================================================================
+# DataLoader Example: Efficiently fetch employees for teams (N+1 Prevention)
+# ============================================================================
+
+# ============================================================================
+# Test route: DataLoader N+1 Prevention Demo
+# This route fetches all teams with their employees in a single batched query
+# Without DataLoader, this would cause N+1 queries (1 for teams, N for employees)
+# With DataLoader, it's only 2 queries total (1 for teams, 1 batched for all employees)
+# ============================================================================
+GET /test-teams-with-employees
+  |> graphql: `
+    query {
+      teams {
+        id
+        name
+        employees(limit: 5) {
+          id
+          name
+          email
+        }
+      }
+    }
+  `
+
+GET /test-teams-with-employees-2
+  |> pg: `SELECT id, name FROM teams`
+  |> jq: `.data.rows | map(.id) as $keys | { keys: $keys, args: { limit: 5 } }`
+  |> EmployeesByTeamLoader
+
+describe "DataLoader N+1 Prevention with Database"
+  it "fetches teams with employees using DataLoader batching"
+    when calling GET /test-teams-with-employees
+    then status is 200
+    and output `.data.teams | type` equals `"array"`
+    and output `.data.teams[0].name | type` equals `"string"`
+    and output `.data.teams[0].employees | type` equals `"array"`
+
+# Loader pipeline: Batch fetch employees by team IDs
+# Input: { "keys": [1, 2, 3] } (team IDs)
+# Output: { "1": [{employee}], "2": [{employee}], "3": [{employee}] }
+
+query teams =
+  |> pg: `
+    SELECT id, name FROM teams
+  `
+  |> jq: `.data.rows`
+
+query team =
+  |> pg([.id]): `
+    SELECT id, name FROM teams WHERE id = $1
+  `
+  |> jq: `.data.rows[0]`
+
+query employees =
+  |> pg([.teamId]): `
+    SELECT id, name, email FROM employees WHERE team_id = $1
+  `
+  |> jq: `.data.rows`
+
+query employee =
+  |> pg([.id]): `
+    SELECT id, name, email FROM employees WHERE id = $1
+  `
+  |> jq: `.data.rows[0]`
+
+
+pipeline EmployeesByTeamLoader =
+  # The loader automatically provides:
+  # - .keys: [1, 2, 3] (batched team IDs)
+  # - .args: {limit: 5} (GraphQL field arguments)
+  # - .context: {...} (request context)
+  # |> debug: `EmployeesByTeamLoader received`
+  |> pg([(.keys | map(tostring) | join(",")), (.args.limit // 10)]): `!raw
+    SELECT
+      json_object_agg(
+        sub.team_id,
+        sub.employees
+      )
+    FROM (
+      SELECT
+        team_id,
+        json_agg(
+          json_build_object(
+            'id', id::text,
+            'name', name,
+            'email', email,
+            'teamId', team_id::text
+          )
+        ) AS employees
+      FROM (
+        SELECT
+          id,
+          name,
+          email,
+          team_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY team_id
+            ORDER BY id
+          ) AS rn
+        FROM employees
+        WHERE team_id::text = ANY(string_to_array($1, ','))
+      ) ranked
+      WHERE ranked.rn <= $2
+      GROUP BY team_id
+    ) sub
+  `
+  # |> debug: `EmployeesByTeamLoader - result`
+
+pipeline EmployeesByTeamLoaderV2 =
+  # 1. Fetch raw rows using standard SQL
+  # We still use ROW_NUMBER() for efficiency (to apply the limit in the DB),
+  # but we return standard rows instead of a JSON blob.
+  |> pg([(.keys | map(tostring) | join(",")), (.args.limit // 10)]): `
+    SELECT id, name, email, team_id
+    FROM (
+      SELECT
+        id, name, email, team_id,
+        ROW_NUMBER() OVER (PARTITION BY team_id ORDER BY id) as rn
+      FROM employees
+      WHERE team_id::text = ANY(string_to_array($1, ','))
+    ) ranked
+    WHERE rn <= $2
+  `
+  # 2. Use JQ to map the flat list of rows into the DataLoader object structure
+  # Input: { "data": { "rows": [{id:1, team_id: 1}, {id:2, team_id: 2}, ...] } }
+  # Output: { "1": [{...}], "2": [{...}] }
+  |> jq: `
+    reduce .data.rows[] as $row (
+      {};
+      .[$row.team_id | tostring] += [$row]
+    )
+  `
+
+# Nested resolver: Use DataLoader to fetch employees for a team
+# This resolver is called for each Team.employees field
+# The DataLoader will batch all team_id requests and call EmployeesByTeamLoader once
+#
+# Magic! The loader pipeline automatically receives:
+# - .keys: batched keys (team IDs)
+# - .args: GraphQL field arguments (limit in this case)
+# - .context: request context (headers, user, etc.)
+resolver Team.employees =
+  |> loader(.parent.id): EmployeesByTeamLoader
+
+# Example route using the getTeam pipeline with args
+pipeline getTeam =
+  |> pg: `SELECT * FROM teams WHERE id = $1`
+
+GET /team/:id
+  |> getTeam({ sqlParams: [.params.id] })
+  |> jq: `{ team: .data.rows[0] }`
+
+describe "Calling GraphQL endpoints"
+  it "can call the GraphQL endpoint"
+    when calling POST /graphql
+    with headers `{ "content-type": "application/json" }`
+    and with body `{ "query": "query { teams { id name } }" }`
+    then status is 200
+    and output `.data.teams | type` equals `"array"`
+    and output `.data.teams[0].name | type` equals `"string"`
+
+# JavaScript middleware test
+GET /js/:id/example
+  |> js: `
+    const id = request.params.id;
+    const name = request.query.name;
+    return {
+      message: "Hello from JavaScript!",
+      id: parseInt(id),
+      name: name,
+      timestamp: new Date().toISOString()
+    };
+  `
+
+describe "javascript middleware"
+  it "transforms data with javascript"
+    when calling GET /js/456/example?name=test
+    then status is 200
+    and output `.message` equals "Hello from JavaScript!"
+    and output `.name` equals "test"
+    and output `.timestamp | type` equals `"string"`
+
+  it "supports undefined to null conversion"
+    when calling GET /js/789/example
+    then status is 200
+    and output `.message` equals "Hello from JavaScript!"
+    and output `.name` equals null
+
+import "./test.wp" as test
+
+GET /test-import
+  |> jq: test::one
+  |> jq: test::two
+  |> jq: `.`
+
+describe "import test"
+  it "gets one"
+    when calling GET /test-import
+    then status is 200
+    and output `.one` equals "one"
+
+jq weatherData = `{
+    "latitude": 52.52,
+    "longitude": 13.419998,
+    "generationtime_ms": 0.03147125244140625,
+    "utc_offset_seconds": 0,
+    "timezone": "GMT",
+    "timezone_abbreviation": "GMT",
+    "elevation": 38.0,
+    "hourly_units": {
+      "time": "iso8601",
+      "temperature_2m": "°C"
+    },
+    "hourly": {
+      "time": [
+        "2026-01-09T00:00",
+        "2026-01-09T01:00",
+        "2026-01-09T02:00",
+        "2026-01-09T03:00",
+        "2026-01-09T04:00",
+        "2026-01-09T05:00",
+        "2026-01-09T06:00",
+        "2026-01-09T07:00",
+        "2026-01-09T08:00",
+        "2026-01-09T09:00",
+        "2026-01-09T10:00",
+        "2026-01-09T11:00",
+        "2026-01-09T12:00",
+        "2026-01-09T13:00",
+        "2026-01-09T14:00",
+        "2026-01-09T15:00",
+        "2026-01-09T16:00",
+        "2026-01-09T17:00",
+        "2026-01-09T18:00",
+        "2026-01-09T19:00",
+        "2026-01-09T20:00",
+        "2026-01-09T21:00",
+        "2026-01-09T22:00",
+        "2026-01-09T23:00"
+      ],
+      "temperature_2m": [
+        -4.2,
+        -4.4,
+        -4.8,
+        -5.2,
+        -6.4,
+        -6.9,
+        -7.4,
+        -7.6,
+        -7.5,
+        -6.9,
+        -6.5,
+        -6.2,
+        -5.5,
+        -5.5,
+        -5.8,
+        -6.1,
+        -6.2,
+        -6.2,
+        -6.2,
+        -6.3,
+        -6.3,
+        -6.4,
+        -6.5,
+        -6.5
+      ]
+    }
+  }`
+
+GET /svg/weather
+  |> jq: weatherData
+  |> jq: `
+    .hourly as $h |
+    [$h.time, $h.temperature_2m] | transpose | map({time: .[0], temp: .[1]})
+  `
+  |> algraf({
+      "type": "svg",
+      "width": 800,
+      "height": 400,
+      "dataFormat": "json",
+      "variables": {
+        "color": "#e74c3c",
+        "size": $context.request.query.size // "3"
+      }
+    }): `
+    Chart(data: input, width: 800, height: 400) {
+      Space(time * temp) {
+        Line(stroke: "$color", strokeWidth: $size)
+        Point(fill: "$color", size: $size)
+      }
+    }
+  `
+
+describe "weather svg with variables"
+  it "returns an svg"
+    when calling GET /svg/weather
+    then status is 200
+    and selector `svg` exists
+
+  it "renders svg with query param size"
+    when calling GET /svg/weather?size=20
+    then status is 200
+    and selector `svg` exists
+
+GET /svg/weather-alias
+  |> jq: weatherData
+  |> jq: `
+    .hourly as $h |
+    [$h.time, $h.temperature_2m] | transpose | map({time: .[0], temp: .[1]})
+  `
+  |> ag({
+      "type": "svg",
+      "dataFormat": "json",
+      "variables": {
+        "color": $context.request.query.color // "#e74c3c",
+        "size": $context.request.query.size // "3",
+        "width": $context.request.query.width // 800,
+        "height": $context.request.query.height // 400,
+      }
+    }): `
+    Chart(data: input, width: $width, height: $height ) {
+      Space(time * temp) {
+        Line(stroke: "$color", strokeWidth: $size)
+        Point(fill: "$color", size: $size)
+      }
+    }
+  `
+
+GET /svg/weather-sparkline
+  |> jq: weatherData
+  |> jq: `
+    .hourly as $h |
+    [$h.time, $h.temperature_2m] | transpose | map({time: .[0], temp: .[1]})
+  `
+  |> ag({
+      "type": "svg",
+      "dataFormat": "json",
+      "variables": {
+        "color": $context.request.query.color // "#e74c3c",
+        "size": $context.request.query.size // "1",
+        "width": $context.request.query.width // 60,
+        "height": $context.request.query.height // 30,
+      }
+    }): `
+    Chart(data: input, width: $width, height: $height, marginLeft: 0, marginRight: 0, marginTop: 0, marginBottom: 0) {
+      Theme(name: "void")
+      Space(time * temp) {
+        Theme(name: "void")
+        Line(stroke: "$color", strokeWidth: $size)
+      }
+    }
+  `
+
+describe "algraf alias ag"
+  it "renders svg using ag alias"
+    when calling GET /svg/weather-alias?size=12
+    then status is 200
+    and selector `svg` exists
+
+GET /svg/weather-named-files
+  |> jq: weatherData
+  |> ag({
+      "type": "svg",
+      "variables": {
+        "color": $context.request.query.color // "#e74c3c",
+        "size": $context.request.query.size // "3",
+        "width": $context.request.query.width // 800,
+        "height": $context.request.query.height // 400
+      },
+      "data": {
+        "weather_hourly.json": (
+          .hourly as $h |
+          [$h.time, $h.temperature_2m]
+          | transpose
+          | map({time: .[0], temp: .[1]})
+        ),
+        "weather_labels.json": (
+          .hourly as $h
+          | (
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({time: .[0], temp: .[1]})
+            ) as $points
+          | [
+              ($points | min_by(.temp) | . + {label: "Low"}),
+              ($points | max_by(.temp) | . + {label: "High"})
+            ]
+        )
+      }
+    }): `
+    Chart(data: "weather_hourly.json", width: $width, height: $height) {
+      Table labels = "weather_labels.json"
+
+      Guide(axis: x, label: "Hour")
+      Guide(axis: y, label: "Temperature (C)")
+
+      Space(time * temp) {
+        Line(stroke: "$color", strokeWidth: $size)
+        Point(fill: "$color", size: $size)
+      }
+
+      Space(time * temp, data: labels) {
+        Point(fill: "#111111", size: 5)
+        Text(label: label, size: 12, dy: -12)
+      }
+    }
+  `
+
+describe "weather svg with named data files"
+  it "renders svg from virtual json files"
+    when calling GET /svg/weather-named-files
+    then status is 200
+    and selector `svg` exists
+
+  it "renders svg with query params"
+    when calling GET /svg/weather-named-files?size=8&color=%23007acc&width=640&height=320
+    then status is 200
+    and selector `svg` exists
+
+GET /svg/weather-cities
+  |> jq: `{
+    cities: {
+      chicago: "Chicago",
+      denver: "Denver",
+      miami: "Miami",
+      seattle: "Seattle"
+    }
+  }`
+  |> fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + .cities.chicago + "&count=1&language=en&format=json", {method: "GET"}) @async(geo_chicago)
+  |> fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + .cities.denver + "&count=1&language=en&format=json", {method: "GET"}) @async(geo_denver)
+  |> fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + .cities.miami + "&count=1&language=en&format=json", {method: "GET"}) @async(geo_miami)
+  |> fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + .cities.seattle + "&count=1&language=en&format=json", {method: "GET"}) @async(geo_seattle)
+  |> join: `geo_chicago,geo_denver,geo_miami,geo_seattle`
+  |> jq: `. + {
+    locations: {
+      chicago: {
+        name: .cities.chicago,
+        latitude: (.async.geo_chicago.data.response.results[0].latitude | tostring),
+        longitude: (.async.geo_chicago.data.response.results[0].longitude | tostring)
+      },
+      denver: {
+        name: .cities.denver,
+        latitude: (.async.geo_denver.data.response.results[0].latitude | tostring),
+        longitude: (.async.geo_denver.data.response.results[0].longitude | tostring)
+      },
+      miami: {
+        name: .cities.miami,
+        latitude: (.async.geo_miami.data.response.results[0].latitude | tostring),
+        longitude: (.async.geo_miami.data.response.results[0].longitude | tostring)
+      },
+      seattle: {
+        name: .cities.seattle,
+        latitude: (.async.geo_seattle.data.response.results[0].latitude | tostring),
+        longitude: (.async.geo_seattle.data.response.results[0].longitude | tostring)
+      }
+    }
+  }`
+  |> fetch("https://api.open-meteo.com/v1/forecast?latitude=" + .locations.chicago.latitude + "&longitude=" + .locations.chicago.longitude + "&hourly=temperature_2m&forecast_days=1", {method: "GET"}) @async(chicago)
+  |> fetch("https://api.open-meteo.com/v1/forecast?latitude=" + .locations.denver.latitude + "&longitude=" + .locations.denver.longitude + "&hourly=temperature_2m&forecast_days=1", {method: "GET"}) @async(denver)
+  |> fetch("https://api.open-meteo.com/v1/forecast?latitude=" + .locations.miami.latitude + "&longitude=" + .locations.miami.longitude + "&hourly=temperature_2m&forecast_days=1", {method: "GET"}) @async(miami)
+  |> fetch("https://api.open-meteo.com/v1/forecast?latitude=" + .locations.seattle.latitude + "&longitude=" + .locations.seattle.longitude + "&hourly=temperature_2m&forecast_days=1", {method: "GET"}) @async(seattle)
+  |> join: `chicago,denver,miami,seattle`
+  |> ag({
+      "interactive": true,
+      "type": "svg",
+      "variables": {
+        "size": $context.request.query.size // "2.5",
+        "width": $context.request.query.width // 800,
+        "height": $context.request.query.height // 400
+      },
+      "data": {
+        "weather_hourly.json": (
+          [
+            (
+              .locations.chicago.name as $city |
+              .async.chicago.data.response.hourly as $h |
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({city: $city, time: .[0], temp: .[1]})
+            ),
+            (
+              .locations.denver.name as $city |
+              .async.denver.data.response.hourly as $h |
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({city: $city, time: .[0], temp: .[1]})
+            ),
+            (
+              .locations.miami.name as $city |
+              .async.miami.data.response.hourly as $h |
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({city: $city, time: .[0], temp: .[1]})
+            ),
+            (
+              .locations.seattle.name as $city |
+              .async.seattle.data.response.hourly as $h |
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({city: $city, time: .[0], temp: .[1]})
+            )
+          ] | add
+        ),
+        "weather_labels.json": (
+          [
+            (
+              .locations.chicago.name as $city |
+              .async.chicago.data.response.hourly as $h |
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({city: $city, time: .[0], temp: .[1]})
+            ),
+            (
+              .locations.denver.name as $city |
+              .async.denver.data.response.hourly as $h |
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({city: $city, time: .[0], temp: .[1]})
+            ),
+            (
+              .locations.miami.name as $city |
+              .async.miami.data.response.hourly as $h |
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({city: $city, time: .[0], temp: .[1]})
+            ),
+            (
+              .locations.seattle.name as $city |
+              .async.seattle.data.response.hourly as $h |
+              [$h.time, $h.temperature_2m]
+              | transpose
+              | map({city: $city, time: .[0], temp: .[1]})
+            )
+          ]
+          | add
+          | group_by(.city)
+          | map(max_by(.temp) | . + {label: .city})
+        )
+      }
+    }): `
+    Chart(data: "weather_hourly.json", width: $width, height: $height) {
+      Theme(name: "minimal")
+      Table labels = "weather_labels.json"
+
+      Scale(stroke: city, palette: "accent")
+      Scale(fill: city, palette: "accent")
+      Guide(axis: x, label: "Hour", timeFormat: "time-minute")
+      Guide(axis: y, label: "Temperature (C)")
+
+      Space(time * temp) {
+        Line(stroke: city, strokeWidth: $size)
+        Point(fill: city, size: $size, tooltip: [city, time, temp])
+      }
+
+      Space(time * temp, data: labels) {
+        Point(fill: city, size: 5)
+        Text(label: label, size: 11, dy: -12, anchor: "middle")
+      }
+    }
+  `
+
+
+GET /:city/weather.svg
+  |> fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + .params.city + "&count=10&language=en&format=json", {method: "GET"})
+  |> jq: `{
+    latitude: .data.response.results[0].latitude | tostring,
+    longitude: .data.response.results[0].longitude | tostring
+  }`
+  |> fetch("https://api.open-meteo.com/v1/forecast?latitude=" + .latitude + "&longitude=" + .longitude + "&hourly=temperature_2m", {method: "GET"})
+  |> jq: `
+    .data.response.hourly as $h |
+    [$h.time, $h.temperature_2m] | transpose | map({time: .[0], temp: .[1]})
+  `
+  |> gg({ "type": "svg", "width": 800, "height": 400} ): `
+    aes(x: time, y: temp)
+      | line()
+      | point()
+  `
+
+GET /:city/weather.png
+  |> fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + .params.city + "&count=10&language=en&format=json", {method: "GET"})
+  |> jq: `{
+    latitude: .data.response.results[0].latitude | tostring,
+    longitude: .data.response.results[0].longitude | tostring
+  }`
+  |> fetch("https://api.open-meteo.com/v1/forecast?latitude=" + .latitude + "&longitude=" + .longitude + "&hourly=temperature_2m", {method: "GET"})
+  |> jq: `
+    .data.response.hourly as $h |
+    [$h.time, $h.temperature_2m] | transpose | map({time: .[0], temp: .[1]})
+  `
+  |> gg({ "type": "png", "width": 800, "height": 400} ): `
+    aes(x: time, y: temp)
+      | line()
+      | point()
+  `
+
+## Pipeline Call Assertions Demo
+
+# A pipeline that processes items and adds metadata
+pipeline processItem =
+  |> jq: `{
+    processed: true,
+    item: .item,
+    quantity: .quantity,
+    total: (.quantity * .price)
+  }`
+
+# A pipeline that validates and enriches order data
+pipeline enrichOrder =
+  |> jq: `{
+    orderId: .orderId,
+    customer: .customer,
+    items: .items,
+    enriched: true,
+    timestamp: now
+  }`
+
+# Route that uses the processItem pipeline
+GET /order/:id/process
+  |> jq: `{
+    item: "widget",
+    quantity: (.query.qty // "1" | tonumber),
+    price: 9.99,
+    orderId: .params.id
+  }`
+  |> processItem
+  |> jq: `{
+    success: true,
+    processed: .processed,
+    item: .item,
+    quantity: .quantity,
+    total: .total
+  }`
+
+# Route that chains multiple pipelines
+POST /order/create
+  |> jq: `{
+    orderId: "ORD-" + (now | tostring),
+    customer: .body.customer,
+    items: .body.items
+  }`
+  |> enrichOrder
+  |> jq: `{
+    success: true,
+    order: .
+  }`
+
+describe "pipeline call assertions"
+  it "verifies pipeline was called with correct backpack state"
+    when calling GET /order/123/process?qty=5
+    then status is 200
+    and output contains `{ "success": true }`
+    and call pipeline processItem with `{ "item": "widget", "quantity": 5, "price": 9.99, "orderId": 123 }`
+
+  it "verifies enrichOrder pipeline receives order data"
+    when calling POST /order/create
+    with body `{ "customer": "John Doe", "items": ["item1", "item2"] }`
+    then status is 200
+    and output contains `{ "success": true }`
+    and call pipeline enrichOrder with `{ "customer": "John Doe", "items": ["item1", "item2"] }`
+
+describe "pipeline mocking"
+  with mock pipeline processItem returning `{
+    "processed": true,
+    "mocked": true,
+    "item": "mocked-widget",
+    "total": 999.99
+  }`
+
+  it "uses mocked pipeline response instead of real execution"
+    when executing pipeline processItem
+    with input `{ "item": "real-widget", "quantity": 10, "price": 5.00 }`
+    then output contains `{ "mocked": true }`
+    and output contains `{ "item": "mocked-widget" }`
+    and output contains `{ "total": 999.99 }`
+
+  it "can override describe-level mock at test level"
+    when executing pipeline processItem
+    with input `{ "item": "another-widget", "quantity": 1, "price": 1.00 }`
+    and mock pipeline processItem returning `{ "processed": true, "overridden": true, "custom": "value" }`
+    then output contains `{ "overridden": true }`
+    and output contains `{ "custom": "value" }`
+
+## Pipeline Sugar Demo
+# Demonstrates shorthand named pipeline calls without explicit `pipeline:` syntax
+
+pipeline withSugar =
+  |> jq: `{ sugar: true }`
+
+pipeline getSugarParams =
+  |> jq: `{ test: .params[0] }`
+
+GET /pipeline-sugar
+  |> withSugar
+
+GET /pipeline-sugar/params/:id
+  |> getSugarParams({ params: [.params.id] })
+
+GET /pipeline-sugar/invalid
+  |> nonExistantPipeline
+
+describe "pipeline sugar"
+  it "returns sugar"
+    when calling GET /pipeline-sugar
+    then status is 200
+    and output contains `{ "sugar": true }`
+
+  it "returns params"
+    when calling GET /pipeline-sugar/params/123
+    then status is 200
+    and output contains `{ "test": 123 }`
+
+# Pipeline type-checking demo: this one is intentionally valid.
+assert TeamsPageState = `{
+  data: {
+    rows: [{ id: number, name: string }],
+    rowCount: number
+  }
+}`
+
+GET /type-checking/assert-ok
+  |> jq: `{ sqlParams: [] }`
+  |> pg: `SELECT * FROM teams`
+  |> assert: TeamsPageState
+  |> result
+    assertionError(500):
+      |> jq: `{ error: .errors[0].message, field: .errors[0].field }`
+    ok(200):
+      |> jq: `{ names: .data.rows | map(.name) }`
+    default(500):
+      |> jq: `{
+        error: "Internal server error",
+        message: .errors[0].message
+      }`
+
+
+assert TeamsPageStateIncorrect = `{
+  data: {
+    rows: [{ id: number, user: string }],
+    rowCount: number
+  }
+}`
+
+GET /type-checking/assert-runtime-error
+  |> jq: `{ sqlParams: [] }`
+  |> pg: `SELECT * FROM teams`
+  |> assert: TeamsPageStateIncorrect
+  |> result
+    assertionError(500):
+      |> jq: `{ error: .errors[0].message, field: .errors[0].field }`
+    ok(200):
+      |> jq: `{ names: .data.rows | map(.user) }`
+    default(500):
+      |> jq: `{
+        error: "Internal server error",
+        message: .errors[0].message
+      }`
+
+# Pipeline type-checking demo: this one intentionally has a type error.
+# The LSP should report that .data.rows may be missing before this jq stage.
+  GET /type-checking/assert-error
+    |> jq: `{ names: .data.rows | map(.name) }`
+    |> result
+      jqError(500):
+        |> jq: `{ error: .errors[0].message }`
+      ok(200):
+        |> jq: `{ names: .data.rows | map(.name) }`
+      default(500):
+        |> jq: `{ error: "Internal server error" }`
+
+assert TodoFetchResponse = `{
+  data: {
+    todo: {
+      response: {
+        userId: number,
+        id: number,
+        title: string,
+        completed: boolean
+      }
+    }
+  }
+}`
+
+assert EnsureTableResult = `{
+  data: {
+    ensureTable: {
+      rows: [unknown],
+      rowCount: number
+    }
+  }
+}`
+
+assert InsertResult = `{
+  data: {
+    inserted: {
+      rows: [{
+        id: number,
+        source_url: string,
+        remote_id: number,
+        remote_user_id: number,
+        title: string,
+        completed: boolean,
+        fetched_at: string
+      }],
+      rowCount: number
+    }
+  }
+}`
+
+pipeline normalizeFetchedTodo =
+  |> jq: `
+    .data.todo.response as $todo |
+    {
+      sourceUrl: .sourceUrl,
+      remoteId: $todo.id,
+      remoteUserId: $todo.userId,
+      title: $todo.title,
+      completed: $todo.completed,
+      payloadJson: ($todo | tojson)
+    }
+  `
+
+pipeline writeFetchedTodo =
+  |> pg: `
+    CREATE TABLE IF NOT EXISTS webpipe_fetch_demo (
+      id BIGSERIAL PRIMARY KEY,
+      source_url TEXT NOT NULL,
+      remote_id INTEGER NOT NULL,
+      remote_user_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      completed BOOLEAN NOT NULL,
+      payload JSONB NOT NULL,
+      fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  ` @result(ensureTable)
+  |> assert: EnsureTableResult @error(pgShapeError)
+  |> pg([.sourceUrl, .remoteId, .remoteUserId, .title, .completed, .payloadJson]): `
+    INSERT INTO webpipe_fetch_demo (
+      source_url,
+      remote_id,
+      remote_user_id,
+      title,
+      completed,
+      payload
+    )
+    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    RETURNING
+      id,
+      source_url,
+      remote_id,
+      remote_user_id,
+      title,
+      completed,
+      fetched_at
+  ` @result(inserted)
+  |> assert: InsertResult @error(pgShapeError)
+
+pipeline mainDemo =
+  |> jq: `{ sourceUrl: ($context.options.url // "https://jsonplaceholder.typicode.com/todos/1") }`
+  |> fetch(.sourceUrl, { method: "GET", headers: { "Accept": "application/json" } }) @result(todo)
+  |> assert: TodoFetchResponse @error(todoFetchError)
+  |> normalizeFetchedTodo
+  |> writeFetchedTodo
+  |> result
+    httpError(502):
+      |> jq: `{ ok: false, error: "upstream_http_error", status: .errors[0].status, message: .errors[0].message }`
+    networkError(502):
+      |> jq: `{ ok: false, error: "upstream_network_error", message: .errors[0].message }`
+    timeoutError(504):
+      |> jq: `{ ok: false, error: "upstream_timeout", message: .errors[0].message }`
+    fetchError(500):
+      |> jq: `{ ok: false, error: "fetch_failed", message: .errors[0].message }`
+    todoFetchError(500):
+      |> jq: `{ ok: false, error: "unexpected_upstream_shape", field: .errors[0].field, message: .errors[0].message }`
+    sqlError(500):
+      |> jq: `{ ok: false, error: "pg_write_failed", message: .errors[0].message }`
+    pgError(500):
+      |> jq: `{ ok: false, error: "pg_failed", message: .errors[0].message }`
+    pgShapeError(500):
+      |> jq: `{ ok: false, error: "unexpected_pg_shape", field: .errors[0].field, message: .errors[0].message }`
+    assertionError(500):
+      |> jq: `{ ok: false, error: "unexpected_shape", field: .errors[0].field, message: .errors[0].message }`
+    ok(200):
+      |> jq: `{
+        ok: true,
+        saved: .data.inserted.rows[0],
+        fetched: {
+          url: .sourceUrl,
+          remoteId: .remoteId,
+          remoteUserId: .remoteUserId,
+          title: .title,
+          completed: .completed
+        }
+      }`
+    default(500):
+      |> jq: `{
+        ok: false,
+        error: "Something went wrong",
+        message: .errors[0].message,
+        timestamp: now
+      }`
+
+GET /main-demo
+  |> mainDemo
+  |> result
+    ok(200):
+      |> jq: `{
+        ok: true
+      }`
+    default(500):
+      |> jq: `{ ok: false, error: "Something went wrong", message: .errors[0].message }`

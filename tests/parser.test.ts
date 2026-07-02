@@ -60,7 +60,7 @@ describe('parseProgram - comprehensive_test.wp', () => {
     expect(host!.value.kind === 'EnvVar' || host!.value.kind === 'String').toBe(true);
   });
 
-  it('parses named pipelines and references', () => {
+  it('parses named pipelines and direct calls', () => {
     const np = program.pipelines.find(p => p.name === 'getTeams');
     expect(np).toBeTruthy();
     const route = program.routes.find(r => r.path.startsWith('/page/'));
@@ -70,8 +70,8 @@ describe('parseProgram - comprehensive_test.wp', () => {
       const step = route!.pipeline.pipeline.steps[0];
       expect(step.kind).toBe('Regular');
       if (step.kind === 'Regular') {
-        expect(step.name).toBe('pipeline');
-        expect(step.config).toBe('getTeams');
+        expect(step.name).toBe('getTeams');
+        expect(step.hasConfig).toBe(false);
       }
     }
   });
@@ -116,8 +116,8 @@ describe('parseProgram - focused samples', () => {
     expect(first.name).toBe('jq');
   });
 
-  it('parses inline and named pipeline refs', () => {
-    const src = `pipeline p =\n  |> jq: \`{x:1}\`\n\nGET /a\n  |> pipeline: p`;
+  it('parses direct pipeline calls as regular steps', () => {
+    const src = `pipeline p =\n  |> jq: \`{x:1}\`\n\nGET /a\n  |> p`;
     const program = parseProgram(src);
     const p = program.pipelines.find(pp => pp.name === 'p');
     expect(p).toBeTruthy();
@@ -127,8 +127,8 @@ describe('parseProgram - focused samples', () => {
       const step = route.pipeline.pipeline.steps[0];
       expect(step.kind).toBe('Regular');
       if (step.kind === 'Regular') {
-        expect(step.name).toBe('pipeline');
-        expect(step.config).toBe('p');
+        expect(step.name).toBe('p');
+        expect(step.hasConfig).toBe(false);
       }
     }
   });
@@ -461,19 +461,18 @@ describe('parseProgram - comments inside pipelines', () => {
     }
   });
 
-  it('parses comments inside if blocks', () => {
-    const src = `GET /test-if
+  it('parses comments inside dispatch blocks', () => {
+    const src = `GET /test-dispatch
   |> jq: \`{ level: 10 }\`
-  # comment before if
-  |> if
-    |> jq: \`.level > 5\`
-    # comment before then
-    then:
-      # comment inside then
+  # comment before dispatch
+  |> dispatch
+    # comment before case
+    case @guard(\`.level > 5\`):
+      # comment inside case
       |> jq: \`. + { status: "high" }\`
-    # comment before else
-    else:
-      # comment inside else
+    # comment before default
+    default:
+      # comment inside default
       |> jq: \`. + { status: "low" }\`
 `;
     const program = parseProgram(src);
@@ -482,15 +481,15 @@ describe('parseProgram - comments inside pipelines', () => {
     const route = program.routes[0];
     expect(route.pipeline.kind).toBe('Inline');
     if (route.pipeline.kind === 'Inline') {
-      expect(route.pipeline.pipeline.steps.length).toBe(2); // jq + if
+      expect(route.pipeline.pipeline.steps.length).toBe(2); // jq + dispatch
       
-      const ifStep = route.pipeline.pipeline.steps[1];
-      expect(ifStep.kind).toBe('If');
-      if (ifStep.kind === 'If') {
-        expect(ifStep.condition.steps.length).toBe(1);
-        expect(ifStep.thenBranch.steps.length).toBe(1);
-        expect(ifStep.elseBranch).toBeDefined();
-        expect(ifStep.elseBranch!.steps.length).toBe(1);
+      const dispatchStep = route.pipeline.pipeline.steps[1];
+      expect(dispatchStep.kind).toBe('Dispatch');
+      if (dispatchStep.kind === 'Dispatch') {
+        expect(dispatchStep.branches.length).toBe(1);
+        expect(dispatchStep.branches[0].pipeline.steps.length).toBe(1);
+        expect(dispatchStep.default).toBeDefined();
+        expect(dispatchStep.default!.steps.length).toBe(1);
       }
     }
   });

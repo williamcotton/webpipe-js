@@ -116,11 +116,6 @@ type PipelineRef = {
     pipeline: Pipeline;
     start: number;
     end: number;
-} | {
-    kind: 'Named';
-    name: string;
-    start: number;
-    end: number;
 };
 interface Pipeline {
     steps: PipelineStep[];
@@ -186,22 +181,9 @@ type PipelineStep = {
     start: number;
     end: number;
 } | {
-    kind: 'If';
-    condition: Pipeline;
-    thenBranch: Pipeline;
-    elseBranch?: Pipeline;
-    start: number;
-    end: number;
-} | {
     kind: 'Dispatch';
     branches: DispatchBranch[];
     default?: Pipeline;
-    start: number;
-    end: number;
-} | {
-    kind: 'Foreach';
-    selector: string;
-    pipeline: Pipeline;
     start: number;
     end: number;
 };
